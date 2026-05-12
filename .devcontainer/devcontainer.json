@@ -1,5 +1,5 @@
 {
-  "name": "Spec Viewer Dev Container",
+  "name": "Mac Clip Shelf Dev Container",
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
