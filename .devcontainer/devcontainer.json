@@ -13,16 +13,15 @@
     }
   },
   "containerEnv": {
-    "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
-    "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
-    "DISPLAY": ":1"
+    "XCODE_MCP_HOST": "host.docker.internal",
+    "XCODE_MCP_PORT": "8080"
   },
   "mounts": [
     "source=${localEnv:HOME}/.gitconfig-shared,target=/home/vscode/.gitconfig,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,readonly"
   ],
   "initializeCommand": "bash -lc 'if [ ! -f \"$HOME/.gitconfig-shared\" ]; then if [ -f \"$HOME/.gitconfig\" ]; then cp \"$HOME/.gitconfig\" \"$HOME/.gitconfig-shared\"; else touch \"$HOME/.gitconfig-shared\"; fi; fi; curl -fsSL https://gist.githubusercontent.com/DIO0550/9030208a4e92984e9a1369f61ca8605e/raw/initialize-command.sh | bash'",
-  "postCreateCommand": "sudo /usr/local/share/desktop-init.sh && curl -fsSL https://gist.githubusercontent.com/DIO0550/b08fa721f2b2e63f3cf708015390d5af/raw/post-create.sh | bash && curl -fsSL https://gist.githubusercontent.com/DIO0550/ff46c91b2f4a9211d998cdb3e8fe6e78/raw/install-playwright-skills.sh | bash",
+  "postCreateCommand": "curl -fsSL https://gist.githubusercontent.com/DIO0550/b08fa721f2b2e63f3cf708015390d5af/raw/post-create.sh | bash && curl -fsSL https://gist.githubusercontent.com/DIO0550/ff46c91b2f4a9211d998cdb3e8fe6e78/raw/install-playwright-skills.sh | bash",
   "forwardPorts": [15300],
   "remoteUser": "vscode"
 }

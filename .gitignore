@@ -60,3 +60,10 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# devcontainer init flag
+.devcontainer/.init-done
+.claude/skills
+.codex/skills
+.plugin-workspace
+*.local.*

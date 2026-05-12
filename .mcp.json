@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "xcode": {
+      "type": "stdio",
+      "command": "nc",
+      "args": [
+        "-N",
+        "host.docker.internal",
+        "8080"
+      ],
+      "env": {}
+    }
+  }
+}
