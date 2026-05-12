@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>clip-shelf — standalone</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0;
+    background: linear-gradient(160deg, #0a0d1a 0%, #161a2e 50%, #0e1120 100%);
+    color: #e7e9ee;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 64px 28px 80px; }
+  h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; margin: 18px 0 0; }
+  .sub { color: rgba(255,255,255,0.55); font-size: 14px; margin-top: 6px; }
+  .grid { margin-top: 36px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  a.card { display: block; text-decoration: none; color: inherit;
+    padding: 22px; background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+    transition: background .15s, transform .15s, border-color .15s;
+  }
+  a.card:hover { background: rgba(99,102,241,0.12);
+    border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
+  .num { font-size: 11px; letter-spacing: 0.6px; text-transform: uppercase;
+    color: rgba(255,255,255,0.5); font-variant-numeric: tabular-nums; }
+  .title { font-size: 17px; font-weight: 600; margin-top: 6px; }
+  .desc  { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 6px; line-height: 1.5; }
+  .badge { display: inline-block; font-size: 11px; padding: 4px 9px;
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+    color: rgba(255,255,255,0.7); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="badge">clip-shelf · オフライン版</span>
+    <h1>UI 画面一覧</h1>
+    <div class="sub">各画面は単一HTMLファイルとして完全に自己完結 — ネット接続不要</div>
+
+    <div class="grid">
+      <a class="card" href="01-menubar-dropdown.html">
+        <div class="num">01</div>
+        <div class="title">メニューバー + ドロップダウン</div>
+        <div class="desc">ステータスバーアイコンクリックで出る軽量メニュー。</div>
+      </a>
+      <a class="card" href="02-paste-picker.html">
+        <div class="num">02</div>
+        <div class="title">⌘⇧V 貼り付けピッカー</div>
+        <div class="desc">フローティングカード。デフォルト / 検索中 / ピン留めの3案。</div>
+      </a>
+      <a class="card" href="03-history.html">
+        <div class="num">03</div>
+        <div class="title">履歴一覧</div>
+        <div class="desc">サイドバー + リスト + 詳細プレビューの3カラム。</div>
+      </a>
+      <a class="card" href="04-settings.html">
+        <div class="num">04</div>
+        <div class="title">設定画面</div>
+        <div class="desc">起動・監視・ショートカット設定。</div>
+      </a>
+      <a class="card" href="05-context-menu.html">
+        <div class="num">05</div>
+        <div class="title">右クリック コンテキストメニュー</div>
+        <div class="desc">履歴項目を右クリックした時のメニュー。サブメニュー対応。</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
