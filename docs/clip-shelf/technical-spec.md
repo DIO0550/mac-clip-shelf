@@ -16,10 +16,12 @@ clip-shelf 全体に関わる技術スタック・モジュール構成・依存
 | AppKit ブリッジ | `NSStatusItem` / `NSPanel` / `NSWindow` | SwiftUI 単体では作れない常駐アイコンやフローティングパネルのため |
 | DB | SQLite 3（SwiftData 経由） | macOS 同梱、軽量、信頼性。SwiftData が裏で SQLite を使用 |
 | DB アクセス | SwiftData | Apple 公式、`@Model` ベースの型安全 API、`VersionedSchema` でのマイグレーション、Swift Concurrency 親和性 |
-| グローバルショートカット | KeyboardShortcuts | SwiftUI / Swift 6 対応、設定UIから変更可能、メンテナンス活発 |
+| グローバルショートカット | 自前実装（Carbon `RegisterEventHotKey` + `NSEvent.addLocalMonitorForEvents`） | クリップボード履歴アプリの性質上、キー入力を扱う依存は最小化したい。Apple 公式 API のみで完結する |
 | ビルド | Xcode + xcodebuild | 標準 |
 | 配布 | ローカルビルドのみ | 公開しないため |
 | テスト | XCTest（最小限） | 主要サービスのユニットテスト |
+
+> **依存方針**: クリップボードとキー入力という機微な経路を扱うため、SwiftPM 経由の第三者依存は原則導入しない。既存 OSS（`MASShortcut` / `KeyboardShortcuts` / `GRDB.swift` 等）の**コード構造・実装を参照しない**ことも徹底する。Apple 公式 API のドキュメント / ヘッダから直接実装する。
 
 ## モジュール構成
 

@@ -216,7 +216,8 @@ final class SettingsStore {
         case respectConcealedType
         case includeImages
         case appearance         // system / light / dark
-        // ショートカットは KeyboardShortcuts.Name 経由で別管理
+        case shortcutPicker     // KeyCombo を JSON エンコードして保存
+        case shortcutHistory
     }
 
     func get<T: Codable>(_ key: SettingKey, default: T) -> T
@@ -228,8 +229,8 @@ final class SettingsStore {
 ### 永続化
 
 - スカラ値（Bool / Int / String / enum）は `UserDefaults.standard` に保存
-- 複合値は JSON エンコードして `Data` で保存
-- グローバルショートカットは `KeyboardShortcuts` ライブラリが内部で `UserDefaults` に保存するため、`SettingsStore` の管理対象外
+- 複合値（`KeyCombo` 等）は JSON エンコードして `Data` で保存
+- グローバルショートカットも `SettingsStore` の管理対象に含める（自前実装の `HotkeyService` が `SettingsStore` から読み出して登録する）
 
 `UserDefaults` を採用する理由:
 
