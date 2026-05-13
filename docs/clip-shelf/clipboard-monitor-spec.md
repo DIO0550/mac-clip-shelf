@@ -21,10 +21,9 @@ classDiagram
     }
 
     class HotkeyService {
-        +registerPicker(_ combo KeyCombination)
-        +registerHistory(_ combo KeyCombination)
+        +registerAll()
         +unregisterAll()
-        -hotKeys [MASShortcut]
+        -registered [Slot: EventHotKeyRef]
     }
 
     class PasteService {
@@ -141,20 +140,61 @@ flowchart TD
 
 ### 役割
 
-`MASShortcut` を使い、グローバルなキーボードショートカットを OS に登録する。ピッカー用と履歴ブラウザ用の2つを管理。
+Carbon の `RegisterEventHotKey` API を用いてグローバルなキーボードショートカットを OS に登録する。ピッカー用と履歴ブラウザ用の2つを管理。
+
+#### 自前実装方針
+
+- **キー入力を扱う依存は導入しない**。クリップボード履歴アプリの性質上、キー入力経路に第三者コードを噛ませたくないため
+- Apple 公式 API（`Carbon.HIToolbox`, `AppKit.NSEvent`）の**公開ドキュメント / ヘッダのみ**を参照して実装する
+- `MASShortcut` / `KeyboardShortcuts` 等の既存 OSS の**コード構造や実装を参照しない**。動作の比較確認のために実行することは許容するが、コードの転用・模倣はしない
+- 上記制約により、ライセンス的な拘束とサプライチェーン懸念の両方を排除する
+
+### ドメイン型
+
+```swift
+struct KeyCombo: Codable, Equatable, Sendable {
+    var keyCode: UInt16            // NSEvent.keyCode と同じ値
+    var modifiers: ModifierFlags   // .command / .option / .control / .shift の和
+
+    struct ModifierFlags: OptionSet, Codable, Sendable {
+        let rawValue: UInt
+        static let command = ModifierFlags(rawValue: 1 << 0)
+        static let option  = ModifierFlags(rawValue: 1 << 1)
+        static let control = ModifierFlags(rawValue: 1 << 2)
+        static let shift   = ModifierFlags(rawValue: 1 << 3)
+    }
+}
+```
+
+`NSEvent.ModifierFlags` / `Carbon` の `cmdKey` などとの相互変換ヘルパーを別ファイル（`KeyComboBridging.swift`）に置く。`HotkeyService` 本体に Carbon 依存を漏らさない目的。
 
 ### 公開インターフェース
 
 ```swift
 final class HotkeyService {
     init(settings: SettingsStore)
-    func registerAll()  // settings から読み出して登録
-    func unregisterAll()
 
-    var onPickerHotkey: (() -> Void)?
+    func registerAll()    // settings から KeyCombo を読み出して登録
+    func unregisterAll()  // 登録した EventHotKeyRef を全て解放（アプリ終了時）
+    func reregister(_ slot: Slot, combo: KeyCombo?) throws  // 設定変更時に再登録
+
+    enum Slot { case picker, history }
+
+    var onPickerHotkey:  (() -> Void)?
     var onHistoryHotkey: (() -> Void)?
 }
 ```
+
+### 内部実装
+
+| 要素 | 実装 |
+|:-----|:-----|
+| 登録 | `RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)` |
+| ハンドラ | `InstallEventHandler` で `kEventClassKeyboard` / `kEventHotKeyPressed` を購読 |
+| `hotKeyID.signature` | `'CLIP'`（OSType `0x434C4950`） |
+| `hotKeyID.id` | スロットごとに採番（`1 = picker`, `2 = history`） |
+| 解放 | `UnregisterEventHotKey(ref)` を `unregisterAll()` で呼ぶ |
+| C コールバック → Swift | `Unmanaged.passUnretained(self).toOpaque()` を `userData` に渡し、コールバック内で `takeUnretainedValue()` で復元 |
 
 ### 登録するショートカット
 
@@ -162,6 +202,8 @@ final class HotkeyService {
 |:-----|:----------|:--------|
 | ピッカーを開く | `Cmd + Shift + V` | `shortcut.picker` |
 | 履歴ブラウザを開く | `Cmd + Shift + H` | `shortcut.history` |
+
+`SettingsStore` に `KeyCombo` を JSON エンコードして保存する。
 
 ### 衝突検知
 

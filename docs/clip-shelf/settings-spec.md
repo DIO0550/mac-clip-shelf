@@ -68,7 +68,7 @@
 | `ToggleRow` | `Toggle` | スイッチ式の真偽値設定 |
 | `PickerRow` | `Picker` | 履歴上限件数のドロップダウン |
 | `ShortcutRow` | カスタム `View` | 現在のショートカット表示 + 「変更…」ボタン |
-| `ShortcutRecorder` | カスタム `View`（モーダル） | キャプチャ式の入力UI（MASShortcut を使用） |
+| `ShortcutRecorder` | カスタム `View`（モーダル） | キャプチャ式の入力 UI。`NSEvent.addLocalMonitorForEvents(matching: .keyDown)` を使い**自前で実装**。サードパーティのキー入力ライブラリは使わない（[clipboard-monitor-spec.md](./clipboard-monitor-spec.md) `HotkeyService` の自前実装方針と同じ理由） |
 | `ThemeRadioGroup` | カスタム `View` | システム / ライト / ダーク の3択ラジオ |
 | `DangerButton` | `Button` | 「全削除…」のような破壊的操作。アクセント色は赤系 |
 
@@ -80,11 +80,11 @@
 | クリップボード監視 | 履歴の上限件数 | `Int`（50/200/500/1000/無制限） | `500` | `historyLimit` |
 | クリップボード監視 | パスワードフィールドを除外 | `Bool` | `true` | `respectConcealedType` |
 | クリップボード監視 | 画像を履歴に含める | `Bool` | `true` | `includeImages` |
-| ショートカット | ピッカーを開く | `KeyCombination` | `⌘⇧V` | `shortcut.picker` |
-| ショートカット | 履歴ブラウザを開く | `KeyCombination` | `⌘⇧H` | `shortcut.history` |
+| ショートカット | ピッカーを開く | `KeyCombo` | `⌘⇧V` | `shortcut.picker` |
+| ショートカット | 履歴ブラウザを開く | `KeyCombo` | `⌘⇧H` | `shortcut.history` |
 | 外観 | テーマ | `enum {system,light,dark}` | `.system` | `appearance` |
 
-永続化先は SQLite の `settings_kv` テーブル（詳細: [history-table-spec.md](./history-table-spec.md)）。`UserDefaults` ではなく SQLite を使う理由は、テーブルベースで一元管理し、エクスポート/インポートを容易にするため。
+永続化先は `UserDefaults.standard`。SwiftUI の `@AppStorage` と直接連携でき、`SMAppService`（ログイン項目）など macOS 標準 API との相性が良いため。`KeyCombo` は JSON エンコードして `Data` として保存する（[clipboard-monitor-spec.md](./clipboard-monitor-spec.md) の `KeyCombo` 定義を参照）。
 
 ## ユーザー操作
 
@@ -144,6 +144,5 @@ stateDiagram-v2
 ## 関連仕様
 
 - [persistence-spec.md](./persistence-spec.md) — `SettingsStore` の API
-- [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) — ショートカット登録の挙動
-- [history-table-spec.md](./history-table-spec.md) — `settings_kv` テーブル
+- [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) — ショートカット登録の挙動（自前実装）
 - [technical-spec.md](./technical-spec.md) — テーマ変更の反映方式

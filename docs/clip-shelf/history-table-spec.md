@@ -1,221 +1,211 @@
-# clip-shelf - 履歴テーブル仕様（DB）
+# clip-shelf - 履歴エンティティ仕様（DB）
 
 > **機能**: [clip-shelf](./index.md)
 > **ステータス**: 下書き
-> **DBMS**: SQLite 3（GRDB.swift 経由）
+> **永続化**: SwiftData（裏で SQLite を生成）
 
 ## 概要
 
-clip-shelf のローカル SQLite データベース `history.sqlite` のスキーマ定義。履歴本体・ピン留め・FTS5 全文検索・設定 KV の4テーブルを持つ。
+clip-shelf のローカル永続化ストア `HistoryStore.sqlite`（SwiftData が内部生成）のスキーマ定義。`HistoryItem` を中心とする SwiftData の `@Model` 構成と、`VersionedSchema` を使ったマイグレーション戦略をまとめる。
 
-## テーブル一覧
+> アプリ設定（`historyLimit` 等）は本ストアではなく `UserDefaults` に保存する。設定キー一覧は [settings-spec.md](./settings-spec.md) を参照。
 
-| テーブル名 | 説明 |
+## エンティティ一覧
+
+| エンティティ | 役割 |
 |:----------|:-----|
-| `history` | クリップボード履歴本体 |
-| `pinned_items` | ピン留めされた `history.id` への参照 |
-| `history_fts` | `history` のテキスト本文に対する FTS5 仮想テーブル |
-| `settings_kv` | アプリ設定の KV ストア |
+| `HistoryItem` | クリップボード履歴本体。テキスト / 画像 / ファイル参照を 1 つのモデルで表現し、ピン留め状態もフラットに保持する |
 
-## スキーマ
+ピン留めを別エンティティ（リレーション）にしない理由は、SwiftData では多対 0..1 のリレーションが冗長で、ピン留め状態がアイテム 1 件に対し最大 1 件だけ存在するため、単純なオプショナル属性で十分なため。
 
-### history
+## スキーマ（v1）
 
-| カラム | 型 | NULL許可 | デフォルト | 説明 |
-|:-------|:---|:---------|:----------|:-----|
-| `id` | TEXT | NO | - | 主キー。UUID 文字列 |
-| `kind` | TEXT | NO | - | `'text'` / `'image'` / `'file'` |
-| `text_payload` | TEXT | YES | NULL | プレーンテキスト本文 |
-| `rtf_payload` | BLOB | YES | NULL | RTF データ |
-| `image_payload` | BLOB | YES | NULL | 画像生バイト |
-| `image_type` | TEXT | YES | NULL | UTI 文字列 e.g. `public.png` |
-| `image_hash` | TEXT | YES | NULL | 画像 payload の SHA-256（重複判定用） |
-| `file_path` | TEXT | YES | NULL | ファイル絶対パス |
-| `source_app` | TEXT | YES | NULL | コピー元アプリのバンドルID |
-| `created_at` | INTEGER | NO | unixepoch() | 作成日時（Unix epoch 秒） |
-| `last_used_at` | INTEGER | YES | NULL | 最終利用日時 |
-| `size_bytes` | INTEGER | NO | 0 | payload の総バイト数 |
+### HistoryItem
 
-### pinned_items
+```swift
+import SwiftData
 
-| カラム | 型 | NULL許可 | デフォルト | 説明 |
-|:-------|:---|:---------|:----------|:-----|
-| `history_id` | TEXT | NO | - | `history.id` への参照（主キー） |
-| `pinned_at` | INTEGER | NO | unixepoch() | ピン留めした時刻 |
-| `display_order` | INTEGER | NO | 0 | 上位での並び順（小さいほど上） |
+enum HistoryKind: String, Codable {
+    case text
+    case image
+    case file
+}
 
-### history_fts（FTS5 仮想テーブル）
+@Model
+final class HistoryItem {
+    @Attribute(.unique) var id: UUID
+    var kindRaw: String
 
-```sql
-CREATE VIRTUAL TABLE history_fts USING fts5(
-    text_payload,
-    content='history',
-    content_rowid='rowid',
-    tokenize='unicode61'
-);
+    // テキスト系
+    var textPayload: String?
+    var rtfPayload: Data?
+
+    // 画像系
+    var imagePayload: Data?            // PNG/JPEG/TIFF の生バイト
+    var imageType: String?             // UTI 文字列 e.g. "public.png"
+
+    // ファイル系
+    var filePath: String?
+
+    // 重複判定 / メタ
+    var payloadHash: String?           // SHA-256（画像 or 長文テキスト）
+    var sourceApp: String?             // コピー元アプリのバンドル ID
+    var createdAt: Date
+    var lastUsedAt: Date?
+    var sizeBytes: Int
+
+    // ピン留め
+    var pinnedAt: Date?                // nil = 非ピン
+    var pinnedOrder: Int               // 0 = 非ピン、>0 で上位ほど小さい
+
+    init(id: UUID = UUID(),
+         kind: HistoryKind,
+         createdAt: Date = .now,
+         sizeBytes: Int = 0) {
+        self.id = id
+        self.kindRaw = kind.rawValue
+        self.createdAt = createdAt
+        self.sizeBytes = sizeBytes
+        self.pinnedOrder = 0
+    }
+}
 ```
 
-`history.text_payload` を INSERT / UPDATE / DELETE するトリガーで同期。インデックス対象は本文先頭 1MB に制限。
+### 属性一覧
 
-### settings_kv
+| 属性 | 型 | NULL許可 | 説明 |
+|:-----|:---|:---------|:-----|
+| `id` | `UUID` | NO | 一意キー（`@Attribute(.unique)`） |
+| `kindRaw` | `String` | NO | `HistoryKind` の rawValue（`text` / `image` / `file`） |
+| `textPayload` | `String?` | YES | プレーンテキスト本文 |
+| `rtfPayload` | `Data?` | YES | RTF データ |
+| `imagePayload` | `Data?` | YES | 画像生バイト |
+| `imageType` | `String?` | YES | UTI 文字列 |
+| `filePath` | `String?` | YES | ファイル絶対パス |
+| `payloadHash` | `String?` | YES | SHA-256 ハッシュ（画像 or 長文テキスト） |
+| `sourceApp` | `String?` | YES | コピー元アプリのバンドル ID |
+| `createdAt` | `Date` | NO | 作成日時 |
+| `lastUsedAt` | `Date?` | YES | 最終利用日時 |
+| `sizeBytes` | `Int` | NO | payload の総バイト数 |
+| `pinnedAt` | `Date?` | YES | ピン留め日時。nil = 非ピン |
+| `pinnedOrder` | `Int` | NO | ピン留め内の並び順（0 は非ピン扱い） |
 
-| カラム | 型 | NULL許可 | デフォルト | 説明 |
-|:-------|:---|:---------|:----------|:-----|
-| `key` | TEXT | NO | - | 設定キー（主キー） |
-| `value` | BLOB | NO | - | JSON エンコードされた値 |
-| `updated_at` | INTEGER | NO | unixepoch() | 更新日時 |
+### 不変条件（アプリ層で保証）
 
-## 制約
+SwiftData は CHECK 制約をサポートしないため、以下はアプリ層の `HistoryService.add()` で保証する。
 
-| 制約名 | 種別 | 対象 | 説明 |
-|:-------|:-----|:-----|:-----|
-| `pk_history` | PRIMARY KEY | `history.id` | |
-| `ck_history_kind` | CHECK | `history.kind IN ('text','image','file')` | 型の正当性 |
-| `ck_history_payload` | CHECK | 型ごとに対応 payload が NOT NULL | text なら text_payload、image なら image_payload、file なら file_path |
-| `pk_pinned` | PRIMARY KEY | `pinned_items.history_id` | |
-| `fk_pinned_history` | FOREIGN KEY | `pinned_items.history_id → history.id ON DELETE CASCADE` | 履歴削除時にピンも消える |
-| `pk_settings` | PRIMARY KEY | `settings_kv.key` | |
+| ルール | 内容 |
+|:------|:-----|
+| `kindRaw` の値 | `HistoryKind.allCases.map(\.rawValue)` のいずれか |
+| `kind` と payload の対応 | `.text` → `textPayload` 必須、`.image` → `imagePayload` 必須、`.file` → `filePath` 必須 |
+| `imagePayload` 存在時 | `payloadHash` も埋める |
+| `pinnedAt == nil` 時 | `pinnedOrder == 0` |
 
-`ck_history_payload` の SQL 例:
+## 検索 / 取得パターン
 
-```sql
-CHECK (
-    (kind = 'text'  AND text_payload  IS NOT NULL) OR
-    (kind = 'image' AND image_payload IS NOT NULL) OR
-    (kind = 'file'  AND file_path     IS NOT NULL)
-)
-```
+| ユースケース | 実装 |
+|:-----------|:-----|
+| 直近 N 件 | `FetchDescriptor<HistoryItem>(sortBy: [.init(\.pinnedAt, order: .reverse), .init(\.createdAt, order: .reverse)])` + `fetchLimit = N` |
+| 型フィルタ | `#Predicate { $0.kindRaw == kind.rawValue }` |
+| ピン留めのみ | `#Predicate { $0.pinnedAt != nil }` |
+| テキスト検索 | `#Predicate { $0.textPayload?.localizedStandardContains(query) ?? false }` |
+| 画像重複判定 | `#Predicate { $0.payloadHash == hash && $0.kindRaw == "image" }` |
+| 長文テキスト重複判定 | `#Predicate { $0.payloadHash == hash && $0.kindRaw == "text" }` |
+| 短文テキスト重複判定 | `#Predicate { $0.textPayload == text }` |
 
-## インデックス
+### 重複判定の長短分岐
 
-| インデックス名 | 対象 | 種別 | 用途 |
-|:-------------|:----|:-----|:-----|
-| `idx_history_created_at` | `history(created_at DESC)` | BTREE | 直近順での一覧取得 |
-| `idx_history_kind_created` | `history(kind, created_at DESC)` | BTREE | 型フィルタ付き一覧 |
-| `idx_history_image_hash` | `history(image_hash)` | BTREE | 画像の重複判定 |
-| `idx_history_text_payload_prefix` | `history(text_payload)` | BTREE | テキスト重複判定（短文用） |
-| `idx_pinned_order` | `pinned_items(display_order, pinned_at)` | BTREE | ピン留めの並び順表示 |
+`textPayload` の長さで分岐する:
 
-長文テキストの重複判定は `text_payload` の長さで分岐:
-- 1024 バイト以下 → `idx_history_text_payload_prefix` で直接一致検索
-- 1024 バイト超 → SHA-256（`image_hash` カラムを流用、命名は本来 `payload_hash` だが互換維持のため）
+- 1024 バイト以下 → `textPayload` の完全一致比較
+- 1024 バイト超 → SHA-256 を `payloadHash` に格納し、ハッシュ一致で重複判定
 
-## リレーションシップ
-
-```mermaid
-erDiagram
-    history ||--o| pinned_items : "0..1"
-    history ||--|| history_fts : "1:1 (FTS rowid)"
-    history {
-        TEXT id PK
-        TEXT kind
-        TEXT text_payload
-        BLOB image_payload
-        TEXT image_hash
-        TEXT file_path
-        INTEGER created_at
-        INTEGER last_used_at
-    }
-    pinned_items {
-        TEXT history_id PK_FK
-        INTEGER pinned_at
-        INTEGER display_order
-    }
-    history_fts {
-        TEXT text_payload
-        INTEGER rowid
-    }
-    settings_kv {
-        TEXT key PK
-        BLOB value
-        INTEGER updated_at
-    }
-```
-
-| リレーション | 種別 | 削除時の動作 |
-|:------------|:-----|:------------|
-| `history` ↔ `pinned_items` | 1:0..1 | `ON DELETE CASCADE`（履歴削除でピンも削除） |
-| `history` ↔ `history_fts` | 1:1（rowid） | トリガーで同期 |
-
-## トリガー
-
-`history` の INSERT / UPDATE / DELETE で `history_fts` を同期。
-
-```sql
-CREATE TRIGGER trg_history_ai AFTER INSERT ON history BEGIN
-    INSERT INTO history_fts(rowid, text_payload)
-    VALUES (new.rowid, substr(new.text_payload, 1, 1048576));
-END;
-
-CREATE TRIGGER trg_history_au AFTER UPDATE OF text_payload ON history BEGIN
-    UPDATE history_fts
-    SET text_payload = substr(new.text_payload, 1, 1048576)
-    WHERE rowid = old.rowid;
-END;
-
-CREATE TRIGGER trg_history_ad AFTER DELETE ON history BEGIN
-    DELETE FROM history_fts WHERE rowid = old.rowid;
-END;
-```
+これにより長文テキストの比較コストを抑える。
 
 ## データライフサイクル
 
 | イベント | トリガー | 動作 |
 |:--------|:--------|:-----|
-| 作成 | `ClipboardMonitor` が変更検知 | `history` に INSERT、`history_fts` に同期 |
-| 更新 | `PasteService.touch` 呼び出し | `last_used_at` を現在時刻に UPDATE |
-| 重複検知 | 同内容を再コピー | 既存行の `created_at` を UPDATE（最上位に移動）し、新規 INSERT はしない |
-| ピン留め | UI 操作 | `pinned_items` に INSERT |
-| ピン解除 | UI 操作 | `pinned_items` から DELETE |
-| 上限超過 | `add` 完了後 | ピン留めされていない最古行を `LIMIT n` で DELETE |
-| 全削除 | 設定画面 | `DELETE FROM history`（オプションで `WHERE id NOT IN (SELECT history_id FROM pinned_items)`） |
+| 作成 | `ClipboardMonitor` が変更検知 | `HistoryItem` を `ModelContext.insert` |
+| 更新 | `PasteService.touch` 呼び出し | `lastUsedAt` を現在時刻に更新 |
+| 重複検知 | 同内容を再コピー | 既存項目の `createdAt` を更新（最上位に移動）し、新規 insert はしない |
+| ピン留め | UI 操作 | `pinnedAt = .now`、`pinnedOrder` を採番 |
+| ピン解除 | UI 操作 | `pinnedAt = nil`、`pinnedOrder = 0` |
+| 上限超過 | `add` 完了後 | `pinnedAt == nil` の中から最古をフェッチして delete |
+| 全削除 | 設定画面 | `try modelContext.delete(model: HistoryItem.self, where: ...)`（オプションで `pinnedAt != nil` を残す） |
 | アプリアンインストール | ファイル削除 | `~/Library/Application Support/clip-shelf/` を rm |
-
-## データ整合性
-
-| ルール | 説明 | 強制方法 |
-|:-------|:-----|:---------|
-| 型と payload の対応 | text 型なら text_payload を必ず持つ など | CHECK 制約 |
-| ピン留め参照 | 削除済 ID は参照させない | FOREIGN KEY + CASCADE |
-| 画像ハッシュ | 画像 INSERT 時に必ず `image_hash` を埋める | アプリ層で保証（DB の `ck_image_hash_when_image` も任意で追加可能） |
-| FTS 同期 | `history` と `history_fts` の差異がない | INSERT/UPDATE/DELETE トリガー |
 
 ## マイグレーション
 
-`GRDB.DatabaseMigrator` を起動時に実行。
+`VersionedSchema` を使ってバージョンを型として表現し、`SchemaMigrationPlan` で繋ぐ。
 
-| 識別子 | 内容 | ロールバック |
-|:------|:-----|:----------|
-| `v1_initial` | `history`, `pinned_items`, `settings_kv` 作成 | 起動失敗時はファイル削除 |
-| `v2_fts` | `history_fts` 仮想テーブル + 同期トリガー | テーブル DROP |
-| `v3_image_hash` | `history.image_hash` カラム追加 + インデックス | 個人利用なのでロールバックは不要、再構築可 |
+```swift
+enum SchemaV1: VersionedSchema {
+    static var versionIdentifier: Schema.Version = .init(1, 0, 0)
+    static var models: [any PersistentModel.Type] {
+        [HistoryItem.self]
+    }
+}
+
+enum ClipShelfMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] {
+        [SchemaV1.self]
+    }
+    static var stages: [MigrationStage] { [] }
+}
+```
+
+| 識別子 | 内容 | 種別 |
+|:------|:-----|:-----|
+| `SchemaV1` | 初版（`HistoryItem`） | 初期スキーマ |
+
+将来追加のステージは:
+
+- **lightweight**: 属性追加 / オプショナル化など、データ変換が不要な変更
+- **custom**: データ移行が必要な変更（例: 別エンティティへの分割）
+
+### 起動時の自動適用
+
+```swift
+let container = try ModelContainer(
+    for: HistoryItem.self,
+    migrationPlan: ClipShelfMigrationPlan.self,
+    configurations: ModelConfiguration(
+        url: storeURL,
+        cloudKitDatabase: .none
+    )
+)
+```
+
+マイグレーションに失敗した場合は、ユーザーに「履歴をリセットして起動する」選択肢を提示する（ストアファイル削除 → 再生成）。
 
 ## 初期データ
 
-| テーブル | 初期データ |
-|:--------|:----------|
-| `settings_kv` | デフォルト設定値を v1 マイグレーションで投入（`historyLimit=500` など） |
-| `history` | なし |
-| `pinned_items` | なし |
+| エンティティ | 初期データ |
+|:----------|:----------|
+| `HistoryItem` | なし |
+
+アプリ設定の初期値は `UserDefaults.register(defaults:)` で起動時に登録する（[settings-spec.md](./settings-spec.md) 参照）。
 
 ## パフォーマンス考慮
 
 | 観点 | 対策 |
 |:-----|:-----|
 | 想定レコード数 | 1,000〜10,000 件（個人利用） |
-| 主要クエリ | (1) 直近 N 件取得（`created_at DESC LIMIT N`） (2) 型フィルタ (3) FTS 検索 |
-| ボトルネック | 画像 BLOB の I/O。`SELECT` の射影で `image_payload` を読み込まないよう、サムネイル一覧では `image_payload` を除外する |
-| バキューム | アプリ起動時に `PRAGMA auto_vacuum=INCREMENTAL` を有効化、終了時に `PRAGMA incremental_vacuum` |
+| 主要クエリ | (1) 直近 N 件取得 (2) 型フィルタ (3) `localizedStandardContains` 検索 |
+| ボトルネック | 画像 BLOB の I/O。サムネイル一覧では `imagePayload` を取らず、必要な属性のみ `propertiesToFetch` で射影する |
+| 大量 BLOB | `Data` 属性は SwiftData 内部で外部ファイルに分離されない。サイズ上限を [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) のサイズ制限で抑える |
 
 ## 制限事項
 
-- 画像本体を BLOB で保存するため、巨大画像が大量にあると DB ファイルサイズが膨らむ。50MB 超の画像は履歴化しないことで対処（[clipboard-monitor-spec.md](./clipboard-monitor-spec.md) 参照）
-- SQLite なので同時書き込みは 1 接続に直列化される（WAL でも書き込みは直列）。クリップボード監視 + UI 操作は数秒に1回程度なので問題なし
-- FTS5 の言語別トークナイザは `unicode61` のみ。日本語の形態素解析はしないため、検索は単純な部分文字列マッチに近い
+- 画像本体を `Data` で保存するため、巨大画像が大量にあるとストアサイズが膨らむ。50MB 超の画像は履歴化しないことで対処（[clipboard-monitor-spec.md](./clipboard-monitor-spec.md) 参照）
+- 全文検索は `localizedStandardContains` の部分一致のみ。FTS5 は使わない
+- SwiftData の `@Predicate` は SQLite のクエリに変換できる範囲に限られるため、複雑な条件はアプリ側でフィルタする
+- ストアファイルは平文 SQLite。暗号化はしない（FileVault に依存）
 
 ## 関連仕様
 
-- [persistence-spec.md](./persistence-spec.md) — テーブルを使う `HistoryService` / `SettingsStore`
-- [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) — INSERT の発生源
+- [persistence-spec.md](./persistence-spec.md) — モデルを使う `HistoryService` の API
+- [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) — insert の発生源
 - [history-spec.md](./history-spec.md) — 検索クエリの仕様
-- [settings-spec.md](./settings-spec.md) — `settings_kv` のキー一覧
+- [settings-spec.md](./settings-spec.md) — アプリ設定の保存先（UserDefaults）

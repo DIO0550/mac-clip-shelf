@@ -137,7 +137,7 @@
 
 | エラーケース | 発生条件 | 表示方法 |
 |:------------|:---------|:---------|
-| データベース読み込み失敗 | SQLite 破損 | ウィンドウ中央にエラー画面 + 「履歴をリセット」アクション |
+| データベース読み込み失敗 | SwiftData ストア破損 | ウィンドウ中央にエラー画面 + 「履歴をリセット」アクション |
 | プレビュー画像のデコード失敗 | 履歴データの破損 | プレースホルダ画像 + 「破損データ」ラベル |
 | 削除確定中の競合 | 別箇所で同じ項目が削除済 | 何もせず警告ログのみ |
 
@@ -147,11 +147,11 @@
 |:-----|:-------|:-----|
 | 起動時の初回表示 | 200ms 以下 | リストは仮想化（`LazyVStack`）、初回ロードは最新200件のみで開始 |
 | スクロール | 60fps 維持 | サムネイルは行表示時にレイジー生成 |
-| 検索フィルタ | 100ms 以下（10,000件時） | SQLite の `FTS5` 仮想テーブルで検索 |
+| 検索フィルタ | 100ms 以下（10,000件時） | SwiftData の `#Predicate` + `localizedStandardContains` で部分一致 |
 
 ## 制限事項
 
-- 検索は本文先頭1MB のみインデックス対象（巨大な貼り付け本文の全文検索は対象外）
+- 検索は `textPayload` への部分一致のみ（形態素解析・ランキングなし）
 - 期間ファセットの「今月」は単純な月初〜月末で、ローカルタイムゾーン依存
 - 複数選択でのバッチ操作は MVP では「削除」「ピン留めON/OFF」のみ
 
@@ -160,4 +160,4 @@
 - [paste-picker-spec.md](./paste-picker-spec.md) — 軽量ピッカー
 - [context-menu-spec.md](./context-menu-spec.md) — 行の右クリックメニュー
 - [persistence-spec.md](./persistence-spec.md) — `HistoryService.search`, `delete`, `togglePin`
-- [history-table-spec.md](./history-table-spec.md) — FTS5 / `pinned_items` のテーブル定義
+- [history-table-spec.md](./history-table-spec.md) — `HistoryItem` の `@Model` 定義
