@@ -21,10 +21,9 @@ classDiagram
     }
 
     class HotkeyService {
-        +registerPicker(_ combo KeyCombination)
-        +registerHistory(_ combo KeyCombination)
+        +registerAll()
         +unregisterAll()
-        -hotKeys [MASShortcut]
+        -names [KeyboardShortcuts.Name]
     }
 
     class PasteService {
@@ -141,27 +140,47 @@ flowchart TD
 
 ### 役割
 
-`MASShortcut` を使い、グローバルなキーボードショートカットを OS に登録する。ピッカー用と履歴ブラウザ用の2つを管理。
+[`KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) を使い、グローバルなキーボードショートカットを OS に登録する。ピッカー用と履歴ブラウザ用の2つを管理。
+
+`KeyboardShortcuts` を採用する理由:
+
+- Swift 6 / Strict Concurrency に対応している
+- SwiftUI の `KeyboardShortcuts.Recorder` を使えるため、設定 UI に直接埋め込める
+- ショートカット定義（`KeyboardShortcuts.Name`）を介して `UserDefaults` に自動保存されるため、`SettingsStore` で個別に永続化する必要がない
 
 ### 公開インターフェース
 
 ```swift
+import KeyboardShortcuts
+
+extension KeyboardShortcuts.Name {
+    static let openPicker  = Self("openPicker",  default: .init(.v, modifiers: [.command, .shift]))
+    static let openHistory = Self("openHistory", default: .init(.h, modifiers: [.command, .shift]))
+}
+
 final class HotkeyService {
-    init(settings: SettingsStore)
-    func registerAll()  // settings から読み出して登録
-    func unregisterAll()
+    init()
+    func registerAll()    // onKeyDown ハンドラを登録
+    func unregisterAll()  // ハンドラを解除（アプリ終了時）
 
     var onPickerHotkey: (() -> Void)?
     var onHistoryHotkey: (() -> Void)?
 }
 ```
 
+`registerAll()` 内では以下のように購読する:
+
+```swift
+KeyboardShortcuts.onKeyDown(for: .openPicker)  { [weak self] in self?.onPickerHotkey?() }
+KeyboardShortcuts.onKeyDown(for: .openHistory) { [weak self] in self?.onHistoryHotkey?() }
+```
+
 ### 登録するショートカット
 
-| 用途 | デフォルト | 設定キー |
-|:-----|:----------|:--------|
-| ピッカーを開く | `Cmd + Shift + V` | `shortcut.picker` |
-| 履歴ブラウザを開く | `Cmd + Shift + H` | `shortcut.history` |
+| 用途 | デフォルト | `KeyboardShortcuts.Name` |
+|:-----|:----------|:------------------------|
+| ピッカーを開く | `Cmd + Shift + V` | `.openPicker` |
+| 履歴ブラウザを開く | `Cmd + Shift + H` | `.openHistory` |
 
 ### 衝突検知
 

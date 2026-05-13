@@ -24,7 +24,7 @@ macOS の標準クリップボードは直近1件しか保持できないため�
 - 履歴項目の右クリックコンテキストメニュー
 - クリップボード自動監視（NSPasteboard `changeCount` ポーリング）
 - 自動ペースト（クリップボード書き戻し + `Cmd + V` シミュレート）
-- SQLite による履歴の永続化（GRDB.swift）
+- SwiftData による履歴の永続化（裏で SQLite）
 - ライト / ダーク / システム追従のテーマ切替
 
 **対象外**:
@@ -67,7 +67,8 @@ flowchart LR
         end
 
         subgraph DB[永続化層]
-            DBQ[(SQLite)]
+            DBQ[(SwiftData<br/>SQLite)]
+            UD[(UserDefaults)]
         end
 
         subgraph FE[UI 層 SwiftUI]
@@ -90,7 +91,7 @@ flowchart LR
     HW -. 履歴購読 .-> HS
     CX -- ピン/削除 --> HS
     SW <-- 読み書き --> SS
-    SS <-- 永続化 --> DBQ
+    SS <-- 永続化 --> UD
 ```
 
 ## 処理フロー
@@ -100,7 +101,7 @@ flowchart TD
     A[ユーザーがコピー操作] --> B[ClipboardMonitor が変更検知]
     B --> C{ConcealedType?}
     C -->|YES| Z1[履歴に追加しない]
-    C -->|NO| D[HistoryService が SQLite に保存]
+    C -->|NO| D[HistoryService が SwiftData に保存]
     D --> E[UI に通知 リスト更新]
 
     F[⌘⇧V 押下] --> G[PastePicker 表示]
@@ -124,8 +125,8 @@ flowchart TD
 | [settings-spec.md](./settings-spec.md) | FE | 設定ウィンドウ |
 | [context-menu-spec.md](./context-menu-spec.md) | FE | 履歴項目の右クリックメニュー |
 | [clipboard-monitor-spec.md](./clipboard-monitor-spec.md) | BE | クリップボード監視と自動ペースト |
-| [persistence-spec.md](./persistence-spec.md) | BE | 履歴サービスと SQLite 永続化層 |
-| [history-table-spec.md](./history-table-spec.md) | DB | `history` / `pinned_items` / `settings_kv` テーブル |
+| [persistence-spec.md](./persistence-spec.md) | BE | 履歴サービスと SwiftData 永続化層 |
+| [history-table-spec.md](./history-table-spec.md) | DB | `HistoryItem` の `@Model` 定義とマイグレーション |
 | [technical-spec.md](./technical-spec.md) | 横断 | 技術スタック・モジュール構成・エラー方針 |
 
 ## 非機能要件
@@ -144,7 +145,7 @@ flowchart TD
 | 用語 | 定義 |
 |:-----|:-----|
 | 履歴項目 (HistoryItem) | クリップボードに入った1件分のデータ。テキスト/画像/ファイルパスのいずれかの型を持つ |
-| ピン留め | 履歴項目をリスト上部に固定する操作。`pinned_items` テーブルで管理 |
+| ピン留め | 履歴項目をリスト上部に固定する操作。`HistoryItem` の `pinnedAt` / `pinnedOrder` で管理 |
 | ConcealedType | NSPasteboard における「機密扱い」ヒント型。1Password 等が付与し、履歴アプリは尊重して保存をスキップする |
 | サーフェス | UI が表示される面の単位（メニューバー / ピッカー / ウィンドウ / コンテキストメニュー） |
 | 自動ペースト | 履歴選択後、クリップボードに値を書き戻して `Cmd+V` キーストロークを送信し、アクティブアプリへ貼り付ける操作 |
