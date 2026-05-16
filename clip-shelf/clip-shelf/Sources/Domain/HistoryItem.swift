@@ -47,6 +47,38 @@ struct HistoryItem: Identifiable, Equatable, Hashable, Codable, Sendable {
     var pinnedAt: Date?
     var pinnedOrder: Int
 
+    var kind: Kind {
+        content.kind
+    }
+
+    var previewText: String {
+        switch content {
+        case let .text(text, _):
+            return text.isEmpty ? "Text" : text
+        case let .image(_, typeIdentifier):
+            return typeIdentifier.isEmpty ? "Image" : "Image (\(typeIdentifier))"
+        case let .file(path):
+            guard !path.isEmpty else {
+                return "File"
+            }
+
+            let fileName = URL(fileURLWithPath: path).lastPathComponent
+            return fileName.isEmpty ? "File" : fileName
+        }
+    }
+
+    var thumbnail: Data? {
+        guard case let .image(data, _) = content else {
+            return nil
+        }
+
+        return data
+    }
+
+    var isPinned: Bool {
+        pinnedAt != nil
+    }
+
     init(
         id: UUID = UUID(),
         content: Content,
