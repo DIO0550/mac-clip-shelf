@@ -6,23 +6,39 @@
 //
 
 import Foundation
-import SwiftData
 
-enum HistoryKind: String, Codable, CaseIterable {
-    case text
-    case image
-    case file
-}
+struct HistoryItem: Identifiable, Equatable, Hashable, Codable, Sendable {
+    enum Kind: String, CaseIterable, Codable, Sendable {
+        case text
+        case image
+        case file
+    }
 
-@Model
-final class HistoryItem {
-    @Attribute(.unique) var id: UUID
-    var kindRaw: String
-    var textPayload: String?
-    var rtfPayload: Data?
-    var imagePayload: Data?
-    var imageType: String?
-    var filePath: String?
+    enum Content: Equatable, Hashable, Codable, Sendable {
+        case text(String, rtf: Data?)
+        case image(Data, typeIdentifier: String)
+        case file(path: String)
+
+        var kind: Kind {
+            switch self {
+            case .text:
+                return .text
+            case .image:
+                return .image
+            case .file:
+                return .file
+            }
+        }
+    }
+
+    struct PasteboardRepresentation: Equatable, Hashable, Codable, Sendable {
+        var typeIdentifier: String
+        var data: Data
+    }
+
+    var id: UUID
+    var content: Content
+    var representations: [PasteboardRepresentation]
     var payloadHash: String?
     var sourceApp: String?
     var createdAt: Date
@@ -31,36 +47,32 @@ final class HistoryItem {
     var pinnedAt: Date?
     var pinnedOrder: Int
 
-    var kind: HistoryKind {
-        HistoryKind(rawValue: kindRaw) ?? .text
+    var kind: Kind {
+        content.kind
     }
 
     var previewText: String {
-        switch kind {
-        case .text:
-            guard let textPayload, !textPayload.isEmpty else {
-                return "Text"
-            }
-
-            return textPayload
-        case .image:
-            guard let imageType, !imageType.isEmpty else {
-                return "Image"
-            }
-
-            return "Image (\(imageType))"
-        case .file:
-            guard let filePath, !filePath.isEmpty else {
+        switch content {
+        case let .text(text, _):
+            return text.isEmpty ? "Text" : text
+        case let .image(_, typeIdentifier):
+            return typeIdentifier.isEmpty ? "Image" : "Image (\(typeIdentifier))"
+        case let .file(path):
+            guard !path.isEmpty else {
                 return "File"
             }
 
-            let fileName = URL(fileURLWithPath: filePath).lastPathComponent
+            let fileName = URL(fileURLWithPath: path).lastPathComponent
             return fileName.isEmpty ? "File" : fileName
         }
     }
 
     var thumbnail: Data? {
-        kind == .image ? imagePayload : nil
+        guard case let .image(data, _) = content else {
+            return nil
+        }
+
+        return data
     }
 
     var isPinned: Bool {
@@ -69,14 +81,25 @@ final class HistoryItem {
 
     init(
         id: UUID = UUID(),
-        kind: HistoryKind,
+        content: Content,
+        representations: [PasteboardRepresentation] = [],
+        payloadHash: String? = nil,
+        sourceApp: String? = nil,
         createdAt: Date = .now,
-        sizeBytes: Int = 0
+        lastUsedAt: Date? = nil,
+        sizeBytes: Int = 0,
+        pinnedAt: Date? = nil,
+        pinnedOrder: Int = 0
     ) {
         self.id = id
-        self.kindRaw = kind.rawValue
+        self.content = content
+        self.representations = representations
+        self.payloadHash = payloadHash
+        self.sourceApp = sourceApp
         self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
         self.sizeBytes = sizeBytes
-        self.pinnedOrder = 0
+        self.pinnedAt = pinnedAt
+        self.pinnedOrder = pinnedOrder
     }
 }

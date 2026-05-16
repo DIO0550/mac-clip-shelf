@@ -10,86 +10,73 @@ import Testing
 @testable import clip_shelf
 
 struct HistoryItemDerivedPropertiesTests {
+    @Test func kindUsesContentKind() {
+        let item = HistoryItem(content: .text("hello clipboard", rtf: nil))
+
+        #expect(item.kind == .text)
+    }
+
     @Test func textPreviewUsesTextPayload() {
-        let item = HistoryItem(kind: .text)
-        item.textPayload = "hello clipboard"
+        let item = HistoryItem(content: .text("hello clipboard", rtf: nil))
 
         #expect(item.previewText == "hello clipboard")
     }
 
-    @Test func textPreviewFallsBackForNilPayload() {
-        let item = HistoryItem(kind: .text)
-
-        #expect(item.previewText == "Text")
-    }
-
     @Test func textPreviewFallsBackForEmptyPayload() {
-        let item = HistoryItem(kind: .text)
-        item.textPayload = ""
+        let item = HistoryItem(content: .text("", rtf: nil))
 
         #expect(item.previewText == "Text")
     }
 
     @Test func imagePreviewUsesImageLabel() {
-        let item = HistoryItem(kind: .image)
+        let item = HistoryItem(content: .image(Data([0x01]), typeIdentifier: ""))
 
         #expect(item.previewText == "Image")
     }
 
     @Test func imagePreviewIncludesImageType() {
-        let item = HistoryItem(kind: .image)
-        item.imageType = "public.png"
+        let item = HistoryItem(content: .image(Data([0x01]), typeIdentifier: "public.png"))
 
         #expect(item.previewText == "Image (public.png)")
     }
 
     @Test func imageThumbnailReturnsImagePayload() {
         let imageData = Data([0x01, 0x02, 0x03])
-        let item = HistoryItem(kind: .image)
-        item.imagePayload = imageData
+        let item = HistoryItem(content: .image(imageData, typeIdentifier: "public.png"))
 
         #expect(item.thumbnail == imageData)
     }
 
     @Test func textThumbnailIsNil() {
-        let item = HistoryItem(kind: .text)
-        item.imagePayload = Data([0x01])
+        let item = HistoryItem(content: .text("hello clipboard", rtf: nil))
 
         #expect(item.thumbnail == nil)
     }
 
     @Test func filePreviewUsesLastPathComponent() {
-        let item = HistoryItem(kind: .file)
-        item.filePath = "/Users/dio/Desktop/example.txt"
+        let item = HistoryItem(content: .file(path: "/Users/dio/Desktop/example.txt"))
 
         #expect(item.previewText == "example.txt")
     }
 
-    @Test func filePreviewFallsBackForNilPath() {
-        let item = HistoryItem(kind: .file)
+    @Test func filePreviewFallsBackForEmptyPath() {
+        let item = HistoryItem(content: .file(path: ""))
 
         #expect(item.previewText == "File")
     }
 
     @Test func isPinnedIsFalseWithoutPinnedAt() {
-        let item = HistoryItem(kind: .text)
+        let item = HistoryItem(content: .text("hello clipboard", rtf: nil))
 
         #expect(item.isPinned == false)
     }
 
     @Test func isPinnedIsTrueWithPinnedAt() {
-        let item = HistoryItem(kind: .text)
-        item.pinnedAt = Date()
+        let item = HistoryItem(
+            content: .text("hello clipboard", rtf: nil),
+            pinnedAt: Date()
+        )
 
         #expect(item.isPinned == true)
-    }
-
-    @Test func invalidKindRawFallsBackToText() {
-        let item = HistoryItem(kind: .image)
-        item.kindRaw = "unknown"
-
-        #expect(item.kind == .text)
-        #expect(item.previewText == "Text")
-        #expect(item.thumbnail == nil)
     }
 }
