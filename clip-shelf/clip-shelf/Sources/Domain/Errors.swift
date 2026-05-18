@@ -5,8 +5,6 @@
 //  Created by Codex on 2026/05/18.
 //
 
-import Foundation
-
 enum HistoryError: Error, Equatable, CaseIterable, Sendable {
     case storeFull
     case itemNotFound
