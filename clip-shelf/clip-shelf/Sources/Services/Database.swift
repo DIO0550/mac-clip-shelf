@@ -22,7 +22,7 @@ enum Database {
                 for: .applicationSupportDirectory,
                 in: .userDomainMask,
                 appropriateFor: nil,
-                create: false
+                create: true
             )
         } catch {
             throw DatabaseError.applicationSupportDirectoryUnavailable
