@@ -10,5 +10,8 @@ import Foundation
 enum DatabaseError: Error, Equatable, Sendable {
     case applicationSupportDirectoryUnavailable
     case directoryCreationFailed(URL)
-    case poolOpenFailed(URL)
+    case connectionOpenFailed(URL)
+    case sqliteExecutionFailed(code: Int32, message: String?)
+    case sqliteQueryFailed(code: Int32, message: String?)
+    case sqliteUnexpectedResult
 }

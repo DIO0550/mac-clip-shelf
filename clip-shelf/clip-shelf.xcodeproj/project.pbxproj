@@ -6,11 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		3A7AD5632F77DBA9003E84FD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3A7AD5652F77DBA9003E84FD /* GRDB */; };
-		3A7AD5642F77DBA9003E84FD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3A7AD5662F77DBA9003E84FD /* GRDB */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		3A7AD5472F77DBA9003E84FD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -57,7 +52,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A7AD5632F77DBA9003E84FD /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,7 +59,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A7AD5642F77DBA9003E84FD /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -119,7 +112,6 @@
 			);
 			name = "clip-shelf";
 			packageProductDependencies = (
-				3A7AD5652F77DBA9003E84FD /* GRDB */,
 			);
 			productName = "clip-shelf";
 			productReference = 3A7AD5392F77DBA0003E84FD /* clip-shelf.app */;
@@ -143,7 +135,6 @@
 			);
 			name = "clip-shelfTests";
 			packageProductDependencies = (
-				3A7AD5662F77DBA9003E84FD /* GRDB */,
 			);
 			productName = "clip-shelfTests";
 			productReference = 3A7AD5462F77DBA9003E84FD /* clip-shelfTests.xctest */;
@@ -204,9 +195,6 @@
 			);
 			mainGroup = 3A7AD5302F77DB9F003E84FD;
 			minimizedProjectReferenceProxies = 1;
-			packageReferences = (
-				3A7AD5672F77DBA9003E84FD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
-			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3A7AD53A2F77DBA0003E84FD /* Products */;
 			projectDirPath = "";
@@ -591,30 +579,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		3A7AD5672F77DBA9003E84FD /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/groue/GRDB.swift.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 7.10.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		3A7AD5652F77DBA9003E84FD /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3A7AD5672F77DBA9003E84FD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
-		3A7AD5662F77DBA9003E84FD /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3A7AD5672F77DBA9003E84FD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3A7AD5312F77DB9F003E84FD /* Project object */;
 }

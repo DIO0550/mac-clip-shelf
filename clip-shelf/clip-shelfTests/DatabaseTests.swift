@@ -6,34 +6,31 @@
 //
 
 import Foundation
-import GRDB
 import Testing
 @testable import clip_shelf
 
 struct DatabaseTests {
 
-    @Test func makePoolCreatesFileDatabase() throws {
+    @Test func makeConnectionCreatesFileDatabase() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let databaseURL = temporaryDirectory.appendingPathComponent(Database.databaseFileName)
-        let pool = try Database.makePool(databaseURL: databaseURL)
+        let database = try Database.makeConnection(databaseURL: databaseURL)
 
-        try pool.write { db in
-            try db.execute(sql: "CREATE TABLE smoke_test (id INTEGER PRIMARY KEY)")
-        }
+        try database.execute(sql: "CREATE TABLE smoke_test (id INTEGER PRIMARY KEY)")
 
         #expect(FileManager.default.fileExists(atPath: databaseURL.path))
     }
 
-    @Test func makePoolCreatesMissingParentDirectory() throws {
+    @Test func makeConnectionCreatesMissingParentDirectory() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let nestedDirectory = temporaryDirectory.appendingPathComponent("nested", isDirectory: true)
         let databaseURL = nestedDirectory.appendingPathComponent(Database.databaseFileName)
 
-        _ = try Database.makePool(databaseURL: databaseURL)
+        _ = try Database.makeConnection(databaseURL: databaseURL)
 
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(
@@ -45,67 +42,55 @@ struct DatabaseTests {
         #expect(isDirectory.boolValue)
     }
 
-    @Test func makePoolEnablesWAL() throws {
+    @Test func makeConnectionEnablesWAL() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let pool = try Database.makePool(
+        let database = try Database.makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
         )
 
-        let journalMode = try pool.read { db in
-            try String.fetchOne(db, sql: "PRAGMA journal_mode")
-        }
+        let journalMode = try database.stringValue(sql: "PRAGMA journal_mode")
 
         #expect(journalMode?.lowercased() == "wal")
     }
 
-    @Test func makePoolEnablesForeignKeysOnReadAndWriteConnections() throws {
+    @Test func makeConnectionEnablesForeignKeys() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let pool = try Database.makePool(
+        let database = try Database.makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
         )
 
-        let readForeignKeys = try pool.read { db in
-            try Int.fetchOne(db, sql: "PRAGMA foreign_keys")
-        }
-        let writeForeignKeys = try pool.write { db in
-            try Int.fetchOne(db, sql: "PRAGMA foreign_keys")
-        }
+        let foreignKeys = try database.intValue(sql: "PRAGMA foreign_keys")
 
-        #expect(readForeignKeys == 1)
-        #expect(writeForeignKeys == 1)
+        #expect(foreignKeys == 1)
     }
 
-    @Test func makePoolRejectsForeignKeyViolations() throws {
+    @Test func makeConnectionRejectsForeignKeyViolations() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let pool = try Database.makePool(
+        let database = try Database.makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
         )
 
-        try pool.write { db in
-            try db.execute(sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY)")
-            try db.execute(sql: """
+        try database.execute(sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        try database.execute(sql: """
                 CREATE TABLE child (
                     id INTEGER PRIMARY KEY,
                     parent_id INTEGER NOT NULL REFERENCES parent(id)
                 )
                 """)
-        }
 
         do {
-            try pool.write { db in
-                try db.execute(sql: "INSERT INTO child (id, parent_id) VALUES (1, 999)")
-            }
+            try database.execute(sql: "INSERT INTO child (id, parent_id) VALUES (1, 999)")
             Issue.record("Expected foreign key violation")
-        } catch let error as GRDB.DatabaseError {
-            #expect(error.extendedResultCode == .SQLITE_CONSTRAINT_FOREIGNKEY)
+        } catch DatabaseError.sqliteExecutionFailed(let code, _) {
+            #expect(code == SQLiteDatabase.foreignKeyConstraintCode)
         } catch {
-            Issue.record("Expected GRDB foreign key constraint error")
+            Issue.record("Expected SQLite foreign key constraint error")
         }
     }
 
@@ -114,7 +99,10 @@ struct DatabaseTests {
 
         #expect(DatabaseError.applicationSupportDirectoryUnavailable == .applicationSupportDirectoryUnavailable)
         #expect(DatabaseError.directoryCreationFailed(directoryURL) == .directoryCreationFailed(directoryURL))
-        #expect(DatabaseError.poolOpenFailed(directoryURL) == .poolOpenFailed(directoryURL))
+        #expect(DatabaseError.connectionOpenFailed(directoryURL) == .connectionOpenFailed(directoryURL))
+        #expect(DatabaseError.sqliteExecutionFailed(code: 1, message: "error") == .sqliteExecutionFailed(code: 1, message: "error"))
+        #expect(DatabaseError.sqliteQueryFailed(code: 1, message: "error") == .sqliteQueryFailed(code: 1, message: "error"))
+        #expect(DatabaseError.sqliteUnexpectedResult == .sqliteUnexpectedResult)
     }
 
     private func makeTemporaryDirectory() -> URL {
