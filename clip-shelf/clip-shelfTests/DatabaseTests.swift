@@ -102,8 +102,10 @@ struct DatabaseTests {
                 try db.execute(sql: "INSERT INTO child (id, parent_id) VALUES (1, 999)")
             }
             Issue.record("Expected foreign key violation")
+        } catch let error as GRDB.DatabaseError {
+            #expect(error.extendedResultCode == .SQLITE_CONSTRAINT_FOREIGNKEY)
         } catch {
-            #expect(true)
+            Issue.record("Expected GRDB foreign key constraint error")
         }
     }
 
