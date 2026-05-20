@@ -99,7 +99,7 @@ struct DatabaseTests {
 
         #expect(DatabaseError.applicationSupportDirectoryUnavailable == .applicationSupportDirectoryUnavailable)
         #expect(DatabaseError.directoryCreationFailed(directoryURL) == .directoryCreationFailed(directoryURL))
-        #expect(DatabaseError.connectionOpenFailed(directoryURL) == .connectionOpenFailed(directoryURL))
+        #expect(DatabaseError.connectionOpenFailed(directoryURL, code: 1, message: "error") == .connectionOpenFailed(directoryURL, code: 1, message: "error"))
         #expect(DatabaseError.sqliteExecutionFailed(code: 1, message: "error") == .sqliteExecutionFailed(code: 1, message: "error"))
         #expect(DatabaseError.sqliteQueryFailed(code: 1, message: "error") == .sqliteQueryFailed(code: 1, message: "error"))
         #expect(DatabaseError.sqliteUnexpectedResult == .sqliteUnexpectedResult)

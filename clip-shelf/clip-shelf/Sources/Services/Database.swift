@@ -62,16 +62,14 @@ struct SQLiteDatabaseConnector: DatabaseConnecting {
             throw DatabaseError.directoryCreationFailed(directoryURL)
         }
 
-        do {
-            return try SQLiteDatabase(databaseURL: resolvedURL)
-        } catch {
-            throw DatabaseError.connectionOpenFailed(resolvedURL)
-        }
+        return try SQLiteDatabase(databaseURL: resolvedURL)
     }
 }
 
 final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
-    nonisolated static var foreignKeyConstraintCode: Int32 { 787 }
+    nonisolated static var foreignKeyConstraintCode: Int32 {
+        SQLITE_CONSTRAINT | (3 << 8)
+    }
 
     nonisolated let databaseURL: URL
 
@@ -89,7 +87,7 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
             if let handle {
                 sqlite3_close(handle)
             }
-            throw DatabaseError.sqliteExecutionFailed(code: openResult, message: message)
+            throw DatabaseError.connectionOpenFailed(databaseURL, code: openResult, message: message)
         }
 
         self.handle = handle
@@ -115,6 +113,7 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
         var errorMessage: UnsafeMutablePointer<CChar>?
         let result = sqlite3_exec(handle, sql, nil, nil, &errorMessage)
         let message = errorMessage.map { String(cString: $0) }
+            ?? sqlite3_errmsg(handle).map { String(cString: $0) }
         sqlite3_free(errorMessage)
 
         guard result == SQLITE_OK else {
@@ -136,7 +135,7 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
 
         guard prepareResult == SQLITE_OK, let statement else {
             throw DatabaseError.sqliteQueryFailed(
-                code: prepareResult,
+                code: sqlite3_extended_errcode(handle),
                 message: sqlite3_errmsg(handle).map { String(cString: $0) }
             )
         }
