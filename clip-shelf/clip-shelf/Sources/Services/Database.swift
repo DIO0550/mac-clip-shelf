@@ -106,6 +106,7 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
                 throw DatabaseError.sqliteUnexpectedResult
             }
             try execute(sql: "PRAGMA foreign_keys=ON")
+            try DatabaseMigrator.migrate(database: self)
         } catch {
             sqlite3_close(handle)
             throw error
@@ -168,4 +169,118 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
             )
         }
     }
+}
+
+private enum DatabaseMigrator {
+    static func migrate(database: SQLiteDatabase) throws {
+        guard let userVersion = try database.intValue(sql: "PRAGMA user_version") else {
+            throw DatabaseError.sqliteUnexpectedResult
+        }
+
+        switch userVersion {
+        case 0:
+            try applyV1(database: database)
+        case 1:
+            return
+        default:
+            throw DatabaseError.sqliteUnexpectedResult
+        }
+    }
+
+    private static func applyV1(database: SQLiteDatabase) throws {
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try database.execute(sql: createHistoryTableSQL)
+
+            for sql in createHistoryIndexSQL {
+                try database.execute(sql: sql)
+            }
+
+            try database.execute(sql: "PRAGMA user_version = 1")
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
+    }
+
+    private static let createHistoryTableSQL = """
+        CREATE TABLE IF NOT EXISTS history (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            text_payload TEXT,
+            rtf_payload BLOB,
+            image_payload BLOB,
+            image_type TEXT,
+            file_path TEXT,
+            payload_hash TEXT,
+            source_app TEXT,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+            pinned_at TEXT,
+            pinned_order INTEGER NOT NULL DEFAULT 0,
+            CHECK (kind IN ('text', 'image', 'file')),
+            CHECK (
+                (kind = 'text'
+                    AND text_payload IS NOT NULL
+                    AND length(text_payload) > 0
+                    AND image_payload IS NULL
+                    AND image_type IS NULL
+                    AND file_path IS NULL)
+                OR
+                (kind = 'image'
+                    AND image_payload IS NOT NULL
+                    AND image_type IS NOT NULL
+                    AND length(image_type) > 0
+                    AND text_payload IS NULL
+                    AND rtf_payload IS NULL
+                    AND file_path IS NULL)
+                OR
+                (kind = 'file'
+                    AND file_path IS NOT NULL
+                    AND length(file_path) > 0
+                    AND text_payload IS NULL
+                    AND rtf_payload IS NULL
+                    AND image_payload IS NULL
+                    AND image_type IS NULL)
+            ),
+            CHECK (
+                (pinned_at IS NULL AND pinned_order = 0)
+                OR
+                (pinned_at IS NOT NULL AND pinned_order > 0)
+            )
+        )
+        """
+
+    private static let createHistoryIndexSQL = [
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_created_at
+        ON history (created_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_kind_created_at
+        ON history (kind, created_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_pinned
+        ON history (pinned_order ASC, pinned_at DESC)
+        WHERE pinned_at IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_payload_hash_kind
+        ON history (payload_hash, kind)
+        WHERE payload_hash IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_text_payload
+        ON history (text_payload)
+        WHERE kind = 'text' AND text_payload IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_history_file_path
+        ON history (file_path)
+        WHERE kind = 'file' AND file_path IS NOT NULL
+        """
+    ]
 }
