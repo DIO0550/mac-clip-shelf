@@ -390,7 +390,8 @@ struct DatabaseTests {
             try operation()
             Issue.record("Expected SQLite constraint error")
         } catch DatabaseError.sqliteExecutionFailed(let code, _) {
-            #expect((code & SQLITE_CONSTRAINT) == SQLITE_CONSTRAINT)
+            let primaryCode = code & 0xFF
+            #expect(primaryCode == SQLITE_CONSTRAINT)
         } catch {
             Issue.record("Expected SQLite execution constraint error")
         }
