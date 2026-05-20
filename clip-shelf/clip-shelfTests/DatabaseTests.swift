@@ -412,11 +412,11 @@ struct DatabaseTests {
         )
 
         guard openResult == SQLITE_OK, let handle else {
+            let message = handle.flatMap { sqlite3_errmsg($0).map { String(cString: $0) } }
             if let handle {
                 sqlite3_close(handle)
             }
-            Issue.record("Failed to create unmigrated test database")
-            return
+            throw DatabaseError.connectionOpenFailed(databaseURL, code: openResult, message: message)
         }
 
         defer {
@@ -430,6 +430,11 @@ struct DatabaseTests {
             nil,
             nil
         )
-        #expect(executeResult == SQLITE_OK)
+        guard executeResult == SQLITE_OK else {
+            throw DatabaseError.sqliteExecutionFailed(
+                code: sqlite3_extended_errcode(handle),
+                message: sqlite3_errmsg(handle).map { String(cString: $0) }
+            )
+        }
     }
 }
