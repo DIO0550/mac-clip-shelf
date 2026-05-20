@@ -8,13 +8,29 @@
 import Foundation
 import SQLite3
 
-enum Database {
+protocol DatabaseConnection: Sendable {
+    var databaseURL: URL { get }
+
+    func execute(sql: String) throws
+    func intValue(sql: String) throws -> Int?
+    func stringValue(sql: String) throws -> String?
+}
+
+protocol DatabaseConnecting: Sendable {
+    func makeConnection(databaseURL: URL?) throws -> any DatabaseConnection
+}
+
+struct SQLiteDatabaseConnector: DatabaseConnecting {
     nonisolated static var applicationSupportDirectoryName: String { "clip-shelf" }
     nonisolated static var databaseFileName: String { "HistoryStore.sqlite" }
 
-    nonisolated static func defaultDatabaseURL(
-        fileManager: FileManager = .default
-    ) throws -> URL {
+    let fileManager: FileManager
+
+    nonisolated init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+    }
+
+    nonisolated func defaultDatabaseURL() throws -> URL {
         let applicationSupportURL: URL
 
         do {
@@ -29,15 +45,12 @@ enum Database {
         }
 
         return applicationSupportURL
-            .appendingPathComponent(applicationSupportDirectoryName, isDirectory: true)
-            .appendingPathComponent(databaseFileName, isDirectory: false)
+            .appendingPathComponent(Self.applicationSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent(Self.databaseFileName, isDirectory: false)
     }
 
-    nonisolated static func makeConnection(
-        databaseURL: URL? = nil,
-        fileManager: FileManager = .default
-    ) throws -> SQLiteDatabase {
-        let resolvedURL = try databaseURL ?? defaultDatabaseURL(fileManager: fileManager)
+    nonisolated func makeConnection(databaseURL: URL? = nil) throws -> any DatabaseConnection {
+        let resolvedURL = try databaseURL ?? defaultDatabaseURL()
         let directoryURL = resolvedURL.deletingLastPathComponent()
 
         do {
@@ -57,7 +70,7 @@ enum Database {
     }
 }
 
-final class SQLiteDatabase: @unchecked Sendable {
+final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
     nonisolated static var foreignKeyConstraintCode: Int32 { 787 }
 
     nonisolated let databaseURL: URL

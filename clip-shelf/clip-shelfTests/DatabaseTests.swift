@@ -15,8 +15,8 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let databaseURL = temporaryDirectory.appendingPathComponent(Database.databaseFileName)
-        let database = try Database.makeConnection(databaseURL: databaseURL)
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
         try database.execute(sql: "CREATE TABLE smoke_test (id INTEGER PRIMARY KEY)")
 
@@ -28,9 +28,9 @@ struct DatabaseTests {
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let nestedDirectory = temporaryDirectory.appendingPathComponent("nested", isDirectory: true)
-        let databaseURL = nestedDirectory.appendingPathComponent(Database.databaseFileName)
+        let databaseURL = nestedDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
 
-        _ = try Database.makeConnection(databaseURL: databaseURL)
+        _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(
@@ -46,8 +46,8 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try Database.makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
 
         let journalMode = try database.stringValue(sql: "PRAGMA journal_mode")
@@ -59,8 +59,8 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try Database.makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
 
         let foreignKeys = try database.intValue(sql: "PRAGMA foreign_keys")
@@ -72,8 +72,8 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try Database.makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(Database.databaseFileName)
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
 
         try database.execute(sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY)")
