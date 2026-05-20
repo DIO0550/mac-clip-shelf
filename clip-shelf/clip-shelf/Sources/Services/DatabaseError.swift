@@ -9,6 +9,7 @@ import Foundation
 
 enum DatabaseError: Error, Equatable, Sendable {
     case applicationSupportDirectoryUnavailable
+    case invalidDatabaseURL(URL)
     case directoryCreationFailed(URL)
     case connectionOpenFailed(URL, code: Int32, message: String?)
     case sqliteExecutionFailed(code: Int32, message: String?)

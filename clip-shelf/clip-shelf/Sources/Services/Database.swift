@@ -51,7 +51,12 @@ struct SQLiteDatabaseConnector: DatabaseConnecting {
 
     nonisolated func makeConnection(databaseURL: URL? = nil) throws -> any DatabaseConnection {
         let resolvedURL = try databaseURL ?? defaultDatabaseURL()
-        let directoryURL = resolvedURL.deletingLastPathComponent()
+        guard resolvedURL.isFileURL else {
+            throw DatabaseError.invalidDatabaseURL(resolvedURL)
+        }
+
+        let fileURL = resolvedURL.standardizedFileURL
+        let directoryURL = fileURL.deletingLastPathComponent()
 
         do {
             try fileManager.createDirectory(
@@ -62,7 +67,7 @@ struct SQLiteDatabaseConnector: DatabaseConnecting {
             throw DatabaseError.directoryCreationFailed(directoryURL)
         }
 
-        return try SQLiteDatabase(databaseURL: resolvedURL)
+        return try SQLiteDatabase(databaseURL: fileURL)
     }
 }
 

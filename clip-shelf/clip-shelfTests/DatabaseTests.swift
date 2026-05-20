@@ -96,13 +96,28 @@ struct DatabaseTests {
 
     @Test func databaseErrorIsEquatable() {
         let directoryURL = URL(fileURLWithPath: "/tmp/clip-shelf")
+        let invalidURL = URL(string: "https://example.com/HistoryStore.sqlite")!
 
         #expect(DatabaseError.applicationSupportDirectoryUnavailable == .applicationSupportDirectoryUnavailable)
+        #expect(DatabaseError.invalidDatabaseURL(invalidURL) == .invalidDatabaseURL(invalidURL))
         #expect(DatabaseError.directoryCreationFailed(directoryURL) == .directoryCreationFailed(directoryURL))
         #expect(DatabaseError.connectionOpenFailed(directoryURL, code: 1, message: "error") == .connectionOpenFailed(directoryURL, code: 1, message: "error"))
         #expect(DatabaseError.sqliteExecutionFailed(code: 1, message: "error") == .sqliteExecutionFailed(code: 1, message: "error"))
         #expect(DatabaseError.sqliteQueryFailed(code: 1, message: "error") == .sqliteQueryFailed(code: 1, message: "error"))
         #expect(DatabaseError.sqliteUnexpectedResult == .sqliteUnexpectedResult)
+    }
+
+    @Test func makeConnectionRejectsNonFileURL() throws {
+        let invalidURL = try #require(URL(string: "https://example.com/HistoryStore.sqlite"))
+
+        do {
+            _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: invalidURL)
+            Issue.record("Expected invalid database URL error")
+        } catch DatabaseError.invalidDatabaseURL(let url) {
+            #expect(url == invalidURL)
+        } catch {
+            Issue.record("Expected invalid database URL error")
+        }
     }
 
     private func makeTemporaryDirectory() -> URL {
