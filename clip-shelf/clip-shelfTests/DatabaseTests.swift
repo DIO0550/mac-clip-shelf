@@ -16,9 +16,11 @@ struct DatabaseTests {
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        try database.execute(sql: "CREATE TABLE smoke_test (id INTEGER PRIMARY KEY)")
+            try database.execute(sql: "CREATE TABLE smoke_test (id INTEGER PRIMARY KEY)")
+        }
 
         #expect(FileManager.default.fileExists(atPath: databaseURL.path))
     }
@@ -46,11 +48,14 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try SQLiteDatabaseConnector().makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        )
+        let journalMode: String?
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(
+                databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+            )
 
-        let journalMode = try database.stringValue(sql: "PRAGMA journal_mode")
+            journalMode = try database.stringValue(sql: "PRAGMA journal_mode")
+        }
 
         #expect(journalMode?.lowercased() == "wal")
     }
@@ -59,11 +64,14 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try SQLiteDatabaseConnector().makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        )
+        let foreignKeys: Int?
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(
+                databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+            )
 
-        let foreignKeys = try database.intValue(sql: "PRAGMA foreign_keys")
+            foreignKeys = try database.intValue(sql: "PRAGMA foreign_keys")
+        }
 
         #expect(foreignKeys == 1)
     }
@@ -72,25 +80,27 @@ struct DatabaseTests {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
-        let database = try SQLiteDatabaseConnector().makeConnection(
-            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        )
-
-        try database.execute(sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY)")
-        try database.execute(sql: """
-                CREATE TABLE child (
-                    id INTEGER PRIMARY KEY,
-                    parent_id INTEGER NOT NULL REFERENCES parent(id)
-                )
-                """)
-
         do {
-            try database.execute(sql: "INSERT INTO child (id, parent_id) VALUES (1, 999)")
-            Issue.record("Expected foreign key violation")
-        } catch DatabaseError.sqliteExecutionFailed(let code, _) {
-            #expect(code == SQLiteDatabase.foreignKeyConstraintCode)
-        } catch {
-            Issue.record("Expected SQLite foreign key constraint error")
+            let database = try SQLiteDatabaseConnector().makeConnection(
+                databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+            )
+
+            try database.execute(sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+            try database.execute(sql: """
+                    CREATE TABLE child (
+                        id INTEGER PRIMARY KEY,
+                        parent_id INTEGER NOT NULL REFERENCES parent(id)
+                    )
+                    """)
+
+            do {
+                try database.execute(sql: "INSERT INTO child (id, parent_id) VALUES (1, 999)")
+                Issue.record("Expected foreign key violation")
+            } catch DatabaseError.sqliteExecutionFailed(let code, _) {
+                #expect(code == SQLiteDatabase.foreignKeyConstraintCode)
+            } catch {
+                Issue.record("Expected SQLite foreign key constraint error")
+            }
         }
     }
 
@@ -126,6 +136,14 @@ struct DatabaseTests {
     }
 
     private func removeTemporaryDirectory(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            Issue.record("Failed to remove temporary directory: \(url.path)")
+        }
     }
 }
