@@ -73,6 +73,8 @@ struct SQLiteDatabaseConnector: DatabaseConnecting {
 
 final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
     nonisolated static var foreignKeyConstraintCode: Int32 {
+        // SQLITE_CONSTRAINT_FOREIGNKEY = SQLITE_CONSTRAINT | (3 << 8).
+        // Darwin's SQLite3 module does not expose the extended constant by name.
         SQLITE_CONSTRAINT | (3 << 8)
     }
 
