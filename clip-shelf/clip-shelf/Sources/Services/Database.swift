@@ -171,23 +171,49 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
     }
 }
 
+private protocol DatabaseMigration {
+    var targetVersion: Int { get }
+
+    func apply(database: SQLiteDatabase) throws
+}
+
 private enum DatabaseMigrator {
     static func migrate(database: SQLiteDatabase) throws {
-        guard let userVersion = try database.intValue(sql: "PRAGMA user_version") else {
+        guard let currentVersion = try database.intValue(sql: "PRAGMA user_version") else {
             throw DatabaseError.sqliteUnexpectedResult
         }
 
-        switch userVersion {
-        case 0:
-            try applyV1(database: database)
-        case 1:
-            return
-        default:
-            throw DatabaseError.sqliteUnexpectedResult
+        let migrations = try DatabaseMigrationFactory.migrations(after: currentVersion)
+
+        for migration in migrations {
+            try migration.apply(database: database)
         }
     }
+}
 
-    private static func applyV1(database: SQLiteDatabase) throws {
+private enum DatabaseMigrationFactory {
+    private static var allMigrations: [any DatabaseMigration] {
+        [
+            V1HistoryMigration()
+        ]
+    }
+
+    static func migrations(after currentVersion: Int) throws -> [any DatabaseMigration] {
+        let migrations = allMigrations
+        let latestVersion = migrations.last?.targetVersion ?? 0
+
+        guard currentVersion <= latestVersion else {
+            throw DatabaseError.sqliteUnexpectedResult
+        }
+
+        return migrations.filter { $0.targetVersion > currentVersion }
+    }
+}
+
+private struct V1HistoryMigration: DatabaseMigration {
+    let targetVersion = 1
+
+    func apply(database: SQLiteDatabase) throws {
         do {
             try database.execute(sql: "BEGIN IMMEDIATE")
             try database.execute(sql: createHistoryTableSQL)
@@ -196,7 +222,7 @@ private enum DatabaseMigrator {
                 try database.execute(sql: sql)
             }
 
-            try database.execute(sql: "PRAGMA user_version = 1")
+            try database.execute(sql: "PRAGMA user_version = \(targetVersion)")
             try database.execute(sql: "COMMIT")
         } catch {
             try? database.execute(sql: "ROLLBACK")
@@ -204,7 +230,7 @@ private enum DatabaseMigrator {
         }
     }
 
-    private static let createHistoryTableSQL = """
+    private let createHistoryTableSQL = """
         CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
             kind TEXT NOT NULL,
@@ -253,7 +279,7 @@ private enum DatabaseMigrator {
         )
         """
 
-    private static let createHistoryIndexSQL = [
+    private let createHistoryIndexSQL = [
         """
         CREATE INDEX IF NOT EXISTS idx_history_created_at
         ON history (created_at DESC)
