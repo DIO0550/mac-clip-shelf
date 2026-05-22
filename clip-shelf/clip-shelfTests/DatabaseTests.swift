@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SQLite3
 import Testing
 @testable import clip_shelf
 
@@ -104,6 +105,260 @@ struct DatabaseTests {
         }
     }
 
+    @Test func makeConnectionAppliesHistoryMigration() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'history'
+            """) == 1)
+    }
+
+    @Test func historyMigrationCreatesExpectedIndexes() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'index'
+                AND name IN (
+                    'idx_history_created_at',
+                    'idx_history_kind_created_at',
+                    'idx_history_pinned',
+                    'idx_history_payload_hash_kind',
+                    'idx_history_text_payload',
+                    'idx_history_file_path'
+                )
+            """) == 6)
+    }
+
+    @Test func historyAcceptsValidTextRow() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (
+                id,
+                kind,
+                text_payload,
+                rtf_payload,
+                created_at,
+                size_bytes
+            )
+            VALUES (
+                '11111111-1111-1111-1111-111111111111',
+                'text',
+                'hello',
+                X'0102',
+                '2026-05-20T00:00:00Z',
+                5
+            )
+            """)
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history") == 1)
+    }
+
+    @Test func historyRejectsInvalidKind() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, text_payload, created_at)
+                VALUES (
+                    '22222222-2222-2222-2222-222222222222',
+                    'unknown',
+                    'hello',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+    }
+
+    @Test func historyRejectsPayloadMismatch() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, created_at)
+                VALUES (
+                    '33333333-3333-3333-3333-333333333333',
+                    'text',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, image_type, created_at)
+                VALUES (
+                    '44444444-4444-4444-4444-444444444444',
+                    'image',
+                    'public.png',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, image_payload, created_at)
+                VALUES (
+                    '55555555-5555-5555-5555-555555555555',
+                    'image',
+                    X'0102',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, created_at)
+                VALUES (
+                    '66666666-6666-6666-6666-666666666666',
+                    'file',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, text_payload, file_path, created_at)
+                VALUES (
+                    '77777777-7777-7777-7777-777777777777',
+                    'text',
+                    'hello',
+                    '/tmp/example.txt',
+                    '2026-05-20T00:00:00Z'
+                )
+                """)
+        }
+    }
+
+    @Test func historyRejectsInvalidPinState() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, text_payload, created_at, pinned_order)
+                VALUES (
+                    '88888888-8888-8888-8888-888888888888',
+                    'text',
+                    'hello',
+                    '2026-05-20T00:00:00Z',
+                    1
+                )
+                """)
+        }
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO history (id, kind, text_payload, created_at, pinned_at, pinned_order)
+                VALUES (
+                    '99999999-9999-9999-9999-999999999999',
+                    'text',
+                    'hello',
+                    '2026-05-20T00:00:00Z',
+                    '2026-05-20T00:00:00Z',
+                    0
+                )
+                """)
+        }
+    }
+
+    @Test func historyMigrationIsIdempotent() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'history'
+                """) == 1)
+        }
+    }
+
+    @Test func historyMigrationPreservesExistingTables() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabaseWithLegacyTable(databaseURL: databaseURL)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'legacy_table'
+            """) == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'history'
+            """) == 1)
+    }
+
+    @Test func historyMigrationRejectsFutureUserVersion() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 2")
+
+        do {
+            _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            Issue.record("Expected future database version to be rejected")
+        } catch DatabaseError.sqliteUnexpectedResult {
+            // Expected.
+        } catch {
+            Issue.record("Expected sqliteUnexpectedResult for future database version")
+        }
+    }
+
     @Test func databaseErrorIsEquatable() {
         let directoryURL = URL(fileURLWithPath: "/tmp/clip-shelf")
         let invalidURL = URL(string: "https://example.com/HistoryStore.sqlite")!
@@ -144,6 +399,60 @@ struct DatabaseTests {
             try FileManager.default.removeItem(at: url)
         } catch {
             Issue.record("Failed to remove temporary directory: \(url.path)")
+        }
+    }
+
+    private func expectConstraintFailure(_ operation: () throws -> Void) {
+        do {
+            try operation()
+            Issue.record("Expected SQLite constraint error")
+        } catch DatabaseError.sqliteExecutionFailed(let code, _) {
+            let primaryCode = code & 0xFF
+            #expect(primaryCode == SQLITE_CONSTRAINT)
+        } catch {
+            Issue.record("Expected SQLite execution constraint error")
+        }
+    }
+
+    private func createUnmigratedDatabaseWithLegacyTable(databaseURL: URL) throws {
+        try createUnmigratedDatabase(
+            databaseURL: databaseURL,
+            setupSQL: "CREATE TABLE legacy_table (id INTEGER PRIMARY KEY)"
+        )
+    }
+
+    private func createUnmigratedDatabase(databaseURL: URL, setupSQL: String) throws {
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        var handle: OpaquePointer?
+        let openResult = sqlite3_open_v2(
+            databaseURL.path,
+            &handle,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+
+        guard openResult == SQLITE_OK, let handle else {
+            let message = handle.flatMap { sqlite3_errmsg($0).map { String(cString: $0) } }
+            if let handle {
+                sqlite3_close(handle)
+            }
+            throw DatabaseError.connectionOpenFailed(databaseURL, code: openResult, message: message)
+        }
+
+        defer {
+            sqlite3_close(handle)
+        }
+
+        let executeResult = sqlite3_exec(handle, setupSQL, nil, nil, nil)
+        guard executeResult == SQLITE_OK else {
+            throw DatabaseError.sqliteExecutionFailed(
+                code: sqlite3_extended_errcode(handle),
+                message: sqlite3_errmsg(handle).map { String(cString: $0) }
+            )
         }
     }
 }
