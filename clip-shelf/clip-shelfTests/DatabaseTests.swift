@@ -342,6 +342,23 @@ struct DatabaseTests {
             """) == 1)
     }
 
+    @Test func historyMigrationRejectsFutureUserVersion() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 2")
+
+        do {
+            _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            Issue.record("Expected future database version to be rejected")
+        } catch DatabaseError.sqliteUnexpectedResult {
+            // Expected.
+        } catch {
+            Issue.record("Expected sqliteUnexpectedResult for future database version")
+        }
+    }
+
     @Test func databaseErrorIsEquatable() {
         let directoryURL = URL(fileURLWithPath: "/tmp/clip-shelf")
         let invalidURL = URL(string: "https://example.com/HistoryStore.sqlite")!
@@ -398,6 +415,13 @@ struct DatabaseTests {
     }
 
     private func createUnmigratedDatabaseWithLegacyTable(databaseURL: URL) throws {
+        try createUnmigratedDatabase(
+            databaseURL: databaseURL,
+            setupSQL: "CREATE TABLE legacy_table (id INTEGER PRIMARY KEY)"
+        )
+    }
+
+    private func createUnmigratedDatabase(databaseURL: URL, setupSQL: String) throws {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -423,13 +447,7 @@ struct DatabaseTests {
             sqlite3_close(handle)
         }
 
-        let executeResult = sqlite3_exec(
-            handle,
-            "CREATE TABLE legacy_table (id INTEGER PRIMARY KEY)",
-            nil,
-            nil,
-            nil
-        )
+        let executeResult = sqlite3_exec(handle, setupSQL, nil, nil, nil)
         guard executeResult == SQLITE_OK else {
             throw DatabaseError.sqliteExecutionFailed(
                 code: sqlite3_extended_errcode(handle),
