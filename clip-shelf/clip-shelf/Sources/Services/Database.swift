@@ -222,6 +222,12 @@ private struct V1HistoryMigration: DatabaseMigration {
                 try database.execute(sql: sql)
             }
 
+            try database.execute(sql: createPinnedItemsTableSQL)
+
+            for sql in createPinnedItemsIndexSQL {
+                try database.execute(sql: sql)
+            }
+
             try database.execute(sql: "PRAGMA user_version = \(targetVersion)")
             try database.execute(sql: "COMMIT")
         } catch {
@@ -279,6 +285,14 @@ private struct V1HistoryMigration: DatabaseMigration {
         )
         """
 
+    private let createPinnedItemsTableSQL = """
+        CREATE TABLE IF NOT EXISTS pinned_items (
+            history_id TEXT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
+            pinned_order INTEGER NOT NULL CHECK (pinned_order >= 0),
+            pinned_at TEXT NOT NULL
+        )
+        """
+
     private let createHistoryIndexSQL = [
         """
         CREATE INDEX IF NOT EXISTS idx_history_created_at
@@ -307,6 +321,13 @@ private struct V1HistoryMigration: DatabaseMigration {
         CREATE INDEX IF NOT EXISTS idx_history_file_path
         ON history (file_path)
         WHERE kind = 'file' AND file_path IS NOT NULL
+        """
+    ]
+
+    private let createPinnedItemsIndexSQL = [
+        """
+        CREATE INDEX IF NOT EXISTS idx_pinned_order
+        ON pinned_items (pinned_order ASC, pinned_at DESC)
         """
     ]
 }
