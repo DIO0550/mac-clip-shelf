@@ -190,6 +190,7 @@ private enum DatabaseMigrator {
         }
 
         try V1PinnedItemsRepair().apply(database: database)
+        try V1SettingsKVRepair().apply(database: database)
     }
 }
 
@@ -227,6 +228,12 @@ private struct V1HistoryMigration: DatabaseMigration {
             try database.execute(sql: PinnedItemsSchema.createTableSQL)
 
             for sql in PinnedItemsSchema.createIndexSQL {
+                try database.execute(sql: sql)
+            }
+
+            try database.execute(sql: SettingsKVSchema.createTableSQL)
+
+            for sql in SettingsKVSchema.seedDefaultSettingsSQL {
                 try database.execute(sql: sql)
             }
 
@@ -330,6 +337,16 @@ private struct V1PinnedItemsRepair {
     }
 }
 
+private struct V1SettingsKVRepair {
+    func apply(database: SQLiteDatabase) throws {
+        try database.execute(sql: SettingsKVSchema.createTableSQL)
+
+        for sql in SettingsKVSchema.seedDefaultSettingsSQL {
+            try database.execute(sql: sql)
+        }
+    }
+}
+
 private enum PinnedItemsSchema {
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS pinned_items (
@@ -345,4 +362,36 @@ private enum PinnedItemsSchema {
         ON pinned_items (pinned_order ASC, pinned_at DESC)
         """
     ]
+}
+
+private enum SettingsKVSchema {
+    static let createTableSQL = """
+        CREATE TABLE IF NOT EXISTS settings_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+
+    static let seedDefaultSettingsSQL = [
+        insertDefaultSettingSQL(key: SettingKey.launchAtLogin.rawValue, value: "false"),
+        insertDefaultSettingSQL(key: SettingKey.historyLimit.rawValue, value: "500"),
+        insertDefaultSettingSQL(key: SettingKey.respectConcealedType.rawValue, value: "true"),
+        insertDefaultSettingSQL(key: SettingKey.includeImages.rawValue, value: "true"),
+        insertDefaultSettingSQL(
+            key: SettingKey.shortcutPicker.rawValue,
+            value: #"{"key":"V","modifiers":["command","shift"]}"#
+        ),
+        insertDefaultSettingSQL(
+            key: SettingKey.shortcutHistory.rawValue,
+            value: #"{"key":"H","modifiers":["command","shift"]}"#
+        ),
+        insertDefaultSettingSQL(key: SettingKey.appearance.rawValue, value: "system")
+    ]
+
+    private static func insertDefaultSettingSQL(key: String, value: String) -> String {
+        """
+        INSERT OR IGNORE INTO settings_kv (key, value)
+        VALUES ('\(key)', '\(value)')
+        """
+    }
 }
