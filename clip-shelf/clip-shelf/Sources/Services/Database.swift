@@ -188,6 +188,8 @@ private enum DatabaseMigrator {
         for migration in migrations {
             try migration.apply(database: database)
         }
+
+        try V1PinnedItemsRepair().apply(database: database)
     }
 }
 
@@ -222,9 +224,9 @@ private struct V1HistoryMigration: DatabaseMigration {
                 try database.execute(sql: sql)
             }
 
-            try database.execute(sql: createPinnedItemsTableSQL)
+            try database.execute(sql: PinnedItemsSchema.createTableSQL)
 
-            for sql in createPinnedItemsIndexSQL {
+            for sql in PinnedItemsSchema.createIndexSQL {
                 try database.execute(sql: sql)
             }
 
@@ -285,14 +287,6 @@ private struct V1HistoryMigration: DatabaseMigration {
         )
         """
 
-    private let createPinnedItemsTableSQL = """
-        CREATE TABLE IF NOT EXISTS pinned_items (
-            history_id TEXT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
-            pinned_order INTEGER NOT NULL CHECK (pinned_order >= 0),
-            pinned_at TEXT NOT NULL
-        )
-        """
-
     private let createHistoryIndexSQL = [
         """
         CREATE INDEX IF NOT EXISTS idx_history_created_at
@@ -324,7 +318,28 @@ private struct V1HistoryMigration: DatabaseMigration {
         """
     ]
 
-    private let createPinnedItemsIndexSQL = [
+}
+
+private struct V1PinnedItemsRepair {
+    func apply(database: SQLiteDatabase) throws {
+        try database.execute(sql: PinnedItemsSchema.createTableSQL)
+
+        for sql in PinnedItemsSchema.createIndexSQL {
+            try database.execute(sql: sql)
+        }
+    }
+}
+
+private enum PinnedItemsSchema {
+    static let createTableSQL = """
+        CREATE TABLE IF NOT EXISTS pinned_items (
+            history_id TEXT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
+            pinned_order INTEGER NOT NULL CHECK (pinned_order >= 0),
+            pinned_at TEXT NOT NULL
+        )
+        """
+
+    static let createIndexSQL = [
         """
         CREATE INDEX IF NOT EXISTS idx_pinned_order
         ON pinned_items (pinned_order ASC, pinned_at DESC)

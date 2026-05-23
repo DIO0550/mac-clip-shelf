@@ -467,6 +467,37 @@ struct DatabaseTests {
         }
     }
 
+    @Test func historyMigrationRepairsExistingV1PinnedItemsSchema() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 1
+            """)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'pinned_items'
+            """) == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_pinned_order'
+            """) == 1)
+    }
+
     @Test func historyMigrationPreservesExistingTables() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
