@@ -190,6 +190,7 @@ private enum DatabaseMigrator {
         }
 
         try V1PinnedItemsRepair().apply(database: database)
+        try V1SettingsKVRepair().apply(database: database)
     }
 }
 
@@ -227,6 +228,12 @@ private struct V1HistoryMigration: DatabaseMigration {
             try database.execute(sql: PinnedItemsSchema.createTableSQL)
 
             for sql in PinnedItemsSchema.createIndexSQL {
+                try database.execute(sql: sql)
+            }
+
+            try database.execute(sql: SettingsKVSchema.createTableSQL)
+
+            for sql in SettingsKVSchema.seedDefaultSettingsSQL {
                 try database.execute(sql: sql)
             }
 
@@ -330,6 +337,28 @@ private struct V1PinnedItemsRepair {
     }
 }
 
+private struct V1SettingsKVRepair {
+    func apply(database: SQLiteDatabase) throws {
+        guard try SettingsKVSchema.needsRepair(database: database) else {
+            return
+        }
+
+        do {
+            try database.execute(sql: "BEGIN")
+            try database.execute(sql: SettingsKVSchema.createTableSQL)
+
+            for sql in SettingsKVSchema.seedDefaultSettingsSQL {
+                try database.execute(sql: sql)
+            }
+
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
+    }
+}
+
 private enum PinnedItemsSchema {
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS pinned_items (
@@ -345,4 +374,89 @@ private enum PinnedItemsSchema {
         ON pinned_items (pinned_order ASC, pinned_at DESC)
         """
     ]
+}
+
+private enum SettingsKVSchema {
+    static let createTableSQL = """
+        CREATE TABLE IF NOT EXISTS settings_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+
+    static var seedDefaultSettingsSQL: [String] {
+        defaultSettingRows.map { insertDefaultSettingSQL(key: $0.key, value: $0.value) }
+    }
+
+    private static var defaultSettingRows: [(key: String, value: String)] {
+        let settings = Settings.default
+
+        return [
+            (SettingKey.launchAtLogin.rawValue, storageValue(settings.launchAtLogin)),
+            (SettingKey.historyLimit.rawValue, storageValue(settings.historyLimit)),
+            (SettingKey.respectConcealedType.rawValue, storageValue(settings.respectConcealedType)),
+            (SettingKey.includeImages.rawValue, storageValue(settings.includeImages)),
+            (SettingKey.shortcutPicker.rawValue, storageValue(settings.pickerShortcut)),
+            (SettingKey.shortcutHistory.rawValue, storageValue(settings.historyShortcut)),
+            (SettingKey.appearance.rawValue, settings.appearance.rawValue)
+        ]
+    }
+
+    static func needsRepair(database: SQLiteDatabase) throws -> Bool {
+        let tableExists = try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'settings_kv'
+            """) == 1
+
+        guard tableExists else {
+            return true
+        }
+
+        let expectedKeys = defaultSettingRows
+            .map { $0.key }
+            .map { "'\(sqlLiteral($0))'" }
+            .joined(separator: ", ")
+        let existingDefaultKeyCount = try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM settings_kv
+            WHERE key IN (\(expectedKeys))
+            """) ?? 0
+
+        return existingDefaultKeyCount < defaultSettingRows.count
+    }
+
+    private static func insertDefaultSettingSQL(key: String, value: String) -> String {
+        """
+        INSERT OR IGNORE INTO settings_kv (key, value)
+        VALUES ('\(sqlLiteral(key))', '\(sqlLiteral(value))')
+        """
+    }
+
+    private static func sqlLiteral(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
+    }
+
+    private static func storageValue(_ value: Bool) -> String {
+        value ? "true" : "false"
+    }
+
+    private static func storageValue(_ value: Settings.HistoryLimit) -> String {
+        switch value {
+        case .limited(let limit):
+            "\(limit)"
+        case .unlimited:
+            "unlimited"
+        }
+    }
+
+    private static func storageValue(_ value: Settings.Shortcut) -> String {
+        let object: [String: Any] = [
+            "key": value.key,
+            "modifiers": value.modifiers.map(\.rawValue)
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
 }
