@@ -339,10 +339,18 @@ private struct V1PinnedItemsRepair {
 
 private struct V1SettingsKVRepair {
     func apply(database: SQLiteDatabase) throws {
-        try database.execute(sql: SettingsKVSchema.createTableSQL)
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try database.execute(sql: SettingsKVSchema.createTableSQL)
 
-        for sql in SettingsKVSchema.seedDefaultSettingsSQL {
-            try database.execute(sql: sql)
+            for sql in SettingsKVSchema.seedDefaultSettingsSQL {
+                try database.execute(sql: sql)
+            }
+
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
         }
     }
 }
