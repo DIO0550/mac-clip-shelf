@@ -136,6 +136,72 @@ struct DatabaseTests {
             """) == 1)
     }
 
+    @Test func historyMigrationCreatesSettingsKVTable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'settings_kv'
+            """) == 1)
+    }
+
+    @Test func historyMigrationSeedsDefaultSettings() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+
+        for row in expectedSettingsDefaultRows() {
+            #expect(try database.stringValue(sql: """
+                SELECT value
+                FROM settings_kv
+                WHERE key = '\(row.key)'
+                """) == row.value)
+        }
+    }
+
+    @Test func settingsKVRejectsDuplicateKey() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO settings_kv (key, value)
+                VALUES ('launchAtLogin', 'true')
+                """)
+        }
+    }
+
+    @Test func settingsKVRejectsNullValue() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO settings_kv (key, value)
+                VALUES ('custom', NULL)
+                """)
+        }
+    }
+
     @Test func historyMigrationCreatesExpectedIndexes() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -493,6 +559,12 @@ struct DatabaseTests {
             #expect(try database.intValue(sql: """
                 SELECT COUNT(*)
                 FROM sqlite_master
+                WHERE type = 'table' AND name = 'settings_kv'
+                """) == 1)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
                 WHERE type = 'index' AND name = 'idx_pinned_order'
                 """) == 1)
         }
@@ -527,6 +599,50 @@ struct DatabaseTests {
             FROM sqlite_master
             WHERE type = 'index' AND name = 'idx_pinned_order'
             """) == 1)
+    }
+
+    @Test func historyMigrationRepairsExistingV1SettingsKVSchema() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 1
+            """)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'settings_kv'
+            """) == 1)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+    }
+
+    @Test func settingsKVSeedDoesNotDuplicateAcrossReconnects() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+        }
     }
 
     @Test func historyMigrationPreservesExistingTables() throws {
@@ -620,6 +736,18 @@ struct DatabaseTests {
         } catch {
             Issue.record("Expected SQLite execution constraint error")
         }
+    }
+
+    private func expectedSettingsDefaultRows() -> [(key: String, value: String)] {
+        [
+            (SettingKey.launchAtLogin.rawValue, "false"),
+            (SettingKey.historyLimit.rawValue, "500"),
+            (SettingKey.respectConcealedType.rawValue, "true"),
+            (SettingKey.includeImages.rawValue, "true"),
+            (SettingKey.shortcutPicker.rawValue, #"{"key":"V","modifiers":["command","shift"]}"#),
+            (SettingKey.shortcutHistory.rawValue, #"{"key":"H","modifiers":["command","shift"]}"#),
+            (SettingKey.appearance.rawValue, "system")
+        ]
     }
 
     private func createUnmigratedDatabaseWithLegacyTable(databaseURL: URL) throws {
