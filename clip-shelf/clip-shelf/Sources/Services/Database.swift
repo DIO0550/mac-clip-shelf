@@ -399,7 +399,11 @@ private enum SettingsKVSchema {
     private static func insertDefaultSettingSQL(key: String, value: String) -> String {
         """
         INSERT OR IGNORE INTO settings_kv (key, value)
-        VALUES ('\(key)', '\(value)')
+        VALUES ('\(sqlLiteral(key))', '\(sqlLiteral(value))')
         """
+    }
+
+    private static func sqlLiteral(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
     }
 }
