@@ -339,8 +339,12 @@ private struct V1PinnedItemsRepair {
 
 private struct V1SettingsKVRepair {
     func apply(database: SQLiteDatabase) throws {
+        guard try SettingsKVSchema.needsRepair(database: database) else {
+            return
+        }
+
         do {
-            try database.execute(sql: "BEGIN IMMEDIATE")
+            try database.execute(sql: "BEGIN")
             try database.execute(sql: SettingsKVSchema.createTableSQL)
 
             for sql in SettingsKVSchema.seedDefaultSettingsSQL {
@@ -373,6 +377,16 @@ private enum PinnedItemsSchema {
 }
 
 private enum SettingsKVSchema {
+    private static let defaultSettingKeys = [
+        SettingKey.launchAtLogin.rawValue,
+        SettingKey.historyLimit.rawValue,
+        SettingKey.respectConcealedType.rawValue,
+        SettingKey.includeImages.rawValue,
+        SettingKey.shortcutPicker.rawValue,
+        SettingKey.shortcutHistory.rawValue,
+        SettingKey.appearance.rawValue
+    ]
+
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS settings_kv (
             key TEXT PRIMARY KEY,
@@ -395,6 +409,29 @@ private enum SettingsKVSchema {
         ),
         insertDefaultSettingSQL(key: SettingKey.appearance.rawValue, value: "system")
     ]
+
+    static func needsRepair(database: SQLiteDatabase) throws -> Bool {
+        let tableExists = try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'settings_kv'
+            """) == 1
+
+        guard tableExists else {
+            return true
+        }
+
+        let expectedKeys = defaultSettingKeys
+            .map { "'\(sqlLiteral($0))'" }
+            .joined(separator: ", ")
+        let existingDefaultKeyCount = try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM settings_kv
+            WHERE key IN (\(expectedKeys))
+            """) ?? 0
+
+        return existingDefaultKeyCount < defaultSettingKeys.count
+    }
 
     private static func insertDefaultSettingSQL(key: String, value: String) -> String {
         """
