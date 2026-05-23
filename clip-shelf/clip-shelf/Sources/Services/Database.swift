@@ -334,7 +334,7 @@ private enum PinnedItemsSchema {
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS pinned_items (
             history_id TEXT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
-            pinned_order INTEGER NOT NULL CHECK (pinned_order >= 0),
+            pinned_order INTEGER NOT NULL CHECK (pinned_order > 0),
             pinned_at TEXT NOT NULL
         )
         """

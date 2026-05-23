@@ -351,7 +351,7 @@ struct DatabaseTests {
             INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
             VALUES (
                 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-                0,
+                1,
                 '2026-05-23T00:00:00Z'
             )
             """)
@@ -387,7 +387,7 @@ struct DatabaseTests {
             INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
             VALUES (
                 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-                0,
+                1,
                 '2026-05-23T00:00:00Z'
             )
             """)
@@ -397,7 +397,7 @@ struct DatabaseTests {
                 INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
                 VALUES (
                     'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-                    1,
+                    2,
                     '2026-05-23T00:01:00Z'
                 )
                 """)
@@ -429,6 +429,37 @@ struct DatabaseTests {
                 VALUES (
                     'cccccccc-cccc-cccc-cccc-cccccccccccc',
                     -1,
+                    '2026-05-23T00:00:00Z'
+                )
+                """)
+        }
+    }
+
+    @Test func pinnedItemsRejectZeroOrder() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                'dddddddd-dddd-dddd-dddd-dddddddddddd',
+                'text',
+                'hello',
+                '2026-05-23T00:00:00Z',
+                5
+            )
+            """)
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+                VALUES (
+                    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+                    0,
                     '2026-05-23T00:00:00Z'
                 )
                 """)
