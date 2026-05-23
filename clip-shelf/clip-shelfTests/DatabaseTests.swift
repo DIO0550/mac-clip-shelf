@@ -121,6 +121,21 @@ struct DatabaseTests {
             """) == 1)
     }
 
+    @Test func historyMigrationCreatesPinnedItemsTable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'pinned_items'
+            """) == 1)
+    }
+
     @Test func historyMigrationCreatesExpectedIndexes() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -142,6 +157,21 @@ struct DatabaseTests {
                     'idx_history_file_path'
                 )
             """) == 6)
+    }
+
+    @Test func historyMigrationCreatesPinnedItemsIndex() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_pinned_order'
+            """) == 1)
     }
 
     @Test func historyAcceptsValidTextRow() throws {
@@ -299,6 +329,143 @@ struct DatabaseTests {
         }
     }
 
+    @Test func pinnedItemsCascadeWhenHistoryIsDeleted() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'text',
+                'hello',
+                '2026-05-23T00:00:00Z',
+                5
+            )
+            """)
+        try database.execute(sql: """
+            INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+            VALUES (
+                'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                1,
+                '2026-05-23T00:00:00Z'
+            )
+            """)
+
+        try database.execute(sql: "DELETE FROM history WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'")
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM pinned_items
+            WHERE history_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            """) == 0)
+    }
+
+    @Test func pinnedItemsRejectDuplicateHistoryID() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                'text',
+                'hello',
+                '2026-05-23T00:00:00Z',
+                5
+            )
+            """)
+        try database.execute(sql: """
+            INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+            VALUES (
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                1,
+                '2026-05-23T00:00:00Z'
+            )
+            """)
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+                VALUES (
+                    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                    2,
+                    '2026-05-23T00:01:00Z'
+                )
+                """)
+        }
+    }
+
+    @Test func pinnedItemsRejectNegativeOrder() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                'cccccccc-cccc-cccc-cccc-cccccccccccc',
+                'text',
+                'hello',
+                '2026-05-23T00:00:00Z',
+                5
+            )
+            """)
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+                VALUES (
+                    'cccccccc-cccc-cccc-cccc-cccccccccccc',
+                    -1,
+                    '2026-05-23T00:00:00Z'
+                )
+                """)
+        }
+    }
+
+    @Test func pinnedItemsRejectZeroOrder() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                'dddddddd-dddd-dddd-dddd-dddddddddddd',
+                'text',
+                'hello',
+                '2026-05-23T00:00:00Z',
+                5
+            )
+            """)
+
+        expectConstraintFailure {
+            try database.execute(sql: """
+                INSERT INTO pinned_items (history_id, pinned_order, pinned_at)
+                VALUES (
+                    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+                    0,
+                    '2026-05-23T00:00:00Z'
+                )
+                """)
+        }
+    }
+
     @Test func historyMigrationIsIdempotent() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -318,7 +485,48 @@ struct DatabaseTests {
                 FROM sqlite_master
                 WHERE type = 'table' AND name = 'history'
                 """) == 1)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'pinned_items'
+                """) == 1)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'index' AND name = 'idx_pinned_order'
+                """) == 1)
         }
+    }
+
+    @Test func historyMigrationRepairsExistingV1PinnedItemsSchema() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 1
+            """)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'pinned_items'
+            """) == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_pinned_order'
+            """) == 1)
     }
 
     @Test func historyMigrationPreservesExistingTables() throws {
