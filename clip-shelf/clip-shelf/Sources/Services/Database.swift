@@ -377,16 +377,6 @@ private enum PinnedItemsSchema {
 }
 
 private enum SettingsKVSchema {
-    private static let defaultSettingKeys = [
-        SettingKey.launchAtLogin.rawValue,
-        SettingKey.historyLimit.rawValue,
-        SettingKey.respectConcealedType.rawValue,
-        SettingKey.includeImages.rawValue,
-        SettingKey.shortcutPicker.rawValue,
-        SettingKey.shortcutHistory.rawValue,
-        SettingKey.appearance.rawValue
-    ]
-
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS settings_kv (
             key TEXT PRIMARY KEY,
@@ -394,21 +384,23 @@ private enum SettingsKVSchema {
         )
         """
 
-    static let seedDefaultSettingsSQL = [
-        insertDefaultSettingSQL(key: SettingKey.launchAtLogin.rawValue, value: "false"),
-        insertDefaultSettingSQL(key: SettingKey.historyLimit.rawValue, value: "500"),
-        insertDefaultSettingSQL(key: SettingKey.respectConcealedType.rawValue, value: "true"),
-        insertDefaultSettingSQL(key: SettingKey.includeImages.rawValue, value: "true"),
-        insertDefaultSettingSQL(
-            key: SettingKey.shortcutPicker.rawValue,
-            value: #"{"key":"V","modifiers":["command","shift"]}"#
-        ),
-        insertDefaultSettingSQL(
-            key: SettingKey.shortcutHistory.rawValue,
-            value: #"{"key":"H","modifiers":["command","shift"]}"#
-        ),
-        insertDefaultSettingSQL(key: SettingKey.appearance.rawValue, value: "system")
-    ]
+    static var seedDefaultSettingsSQL: [String] {
+        defaultSettingRows.map { insertDefaultSettingSQL(key: $0.key, value: $0.value) }
+    }
+
+    private static var defaultSettingRows: [(key: String, value: String)] {
+        let settings = Settings.default
+
+        return [
+            (SettingKey.launchAtLogin.rawValue, storageValue(settings.launchAtLogin)),
+            (SettingKey.historyLimit.rawValue, storageValue(settings.historyLimit)),
+            (SettingKey.respectConcealedType.rawValue, storageValue(settings.respectConcealedType)),
+            (SettingKey.includeImages.rawValue, storageValue(settings.includeImages)),
+            (SettingKey.shortcutPicker.rawValue, storageValue(settings.pickerShortcut)),
+            (SettingKey.shortcutHistory.rawValue, storageValue(settings.historyShortcut)),
+            (SettingKey.appearance.rawValue, settings.appearance.rawValue)
+        ]
+    }
 
     static func needsRepair(database: SQLiteDatabase) throws -> Bool {
         let tableExists = try database.intValue(sql: """
@@ -421,7 +413,8 @@ private enum SettingsKVSchema {
             return true
         }
 
-        let expectedKeys = defaultSettingKeys
+        let expectedKeys = defaultSettingRows
+            .map { $0.key }
             .map { "'\(sqlLiteral($0))'" }
             .joined(separator: ", ")
         let existingDefaultKeyCount = try database.intValue(sql: """
@@ -430,7 +423,7 @@ private enum SettingsKVSchema {
             WHERE key IN (\(expectedKeys))
             """) ?? 0
 
-        return existingDefaultKeyCount < defaultSettingKeys.count
+        return existingDefaultKeyCount < defaultSettingRows.count
     }
 
     private static func insertDefaultSettingSQL(key: String, value: String) -> String {
@@ -442,5 +435,28 @@ private enum SettingsKVSchema {
 
     private static func sqlLiteral(_ value: String) -> String {
         value.replacingOccurrences(of: "'", with: "''")
+    }
+
+    private static func storageValue(_ value: Bool) -> String {
+        value ? "true" : "false"
+    }
+
+    private static func storageValue(_ value: Settings.HistoryLimit) -> String {
+        switch value {
+        case .limited(let limit):
+            "\(limit)"
+        case .unlimited:
+            "unlimited"
+        }
+    }
+
+    private static func storageValue(_ value: Settings.Shortcut) -> String {
+        let object: [String: Any] = [
+            "key": value.key,
+            "modifiers": value.modifiers.map(\.rawValue)
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 }
