@@ -645,6 +645,38 @@ struct DatabaseTests {
         }
     }
 
+    @Test func settingsKVRepairPreservesExistingValues() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE settings_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO settings_kv (key, value)
+            VALUES ('launchAtLogin', 'true');
+            PRAGMA user_version = 1
+            """)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM settings_kv") == 7)
+        #expect(try database.stringValue(sql: """
+            SELECT value
+            FROM settings_kv
+            WHERE key = 'launchAtLogin'
+            """) == "true")
+    }
+
     @Test func historyMigrationPreservesExistingTables() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -739,15 +771,40 @@ struct DatabaseTests {
     }
 
     private func expectedSettingsDefaultRows() -> [(key: String, value: String)] {
+        let settings = Settings.default
+
         [
-            (SettingKey.launchAtLogin.rawValue, "false"),
-            (SettingKey.historyLimit.rawValue, "500"),
-            (SettingKey.respectConcealedType.rawValue, "true"),
-            (SettingKey.includeImages.rawValue, "true"),
-            (SettingKey.shortcutPicker.rawValue, #"{"key":"V","modifiers":["command","shift"]}"#),
-            (SettingKey.shortcutHistory.rawValue, #"{"key":"H","modifiers":["command","shift"]}"#),
-            (SettingKey.appearance.rawValue, "system")
+            (SettingKey.launchAtLogin.rawValue, storageValue(settings.launchAtLogin)),
+            (SettingKey.historyLimit.rawValue, storageValue(settings.historyLimit)),
+            (SettingKey.respectConcealedType.rawValue, storageValue(settings.respectConcealedType)),
+            (SettingKey.includeImages.rawValue, storageValue(settings.includeImages)),
+            (SettingKey.shortcutPicker.rawValue, storageValue(settings.pickerShortcut)),
+            (SettingKey.shortcutHistory.rawValue, storageValue(settings.historyShortcut)),
+            (SettingKey.appearance.rawValue, settings.appearance.rawValue)
         ]
+    }
+
+    private func storageValue(_ value: Bool) -> String {
+        value ? "true" : "false"
+    }
+
+    private func storageValue(_ value: Settings.HistoryLimit) -> String {
+        switch value {
+        case .limited(let limit):
+            "\(limit)"
+        case .unlimited:
+            "unlimited"
+        }
+    }
+
+    private func storageValue(_ value: Settings.Shortcut) -> String {
+        let object: [String: Any] = [
+            "key": value.key,
+            "modifiers": value.modifiers.map(\.rawValue)
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
     private func createUnmigratedDatabaseWithLegacyTable(databaseURL: URL) throws {
