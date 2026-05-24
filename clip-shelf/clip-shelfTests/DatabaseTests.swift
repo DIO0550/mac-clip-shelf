@@ -11,6 +11,7 @@ import Testing
 @testable import clip_shelf
 
 struct DatabaseTests {
+    private let expectedLatestUserVersion = 3
 
     @Test func makeConnectionCreatesFileDatabase() throws {
         let temporaryDirectory = makeTemporaryDirectory()
@@ -113,7 +114,7 @@ struct DatabaseTests {
             databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -251,9 +252,82 @@ struct DatabaseTests {
                     'idx_history_pinned',
                     'idx_history_payload_hash_kind',
                     'idx_history_text_payload',
-                    'idx_history_file_path'
+                    'idx_history_file_path',
+                    'idx_history_image_hash'
                 )
-            """) == 6)
+            """) == 7)
+    }
+
+    @Test func historyMigrationCreatesImageHashColumn() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try expectHistoryImageHashSchema(database: database)
+    }
+
+    @Test func historyMigrationCreatesPartialImageHashIndex() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try expectHistoryImageHashSchema(database: database)
+    }
+
+    @Test func historyMigrationMigratesVersion2DatabaseToImageHashSchema() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createVersion2DatabaseFixture(databaseURL: databaseURL)
+
+        #expect(try rawIntValue(databaseURL: databaseURL, sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'history_fts'
+            """) == 1)
+        #expect(try rawIntValue(databaseURL: databaseURL, sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'trigger'
+                AND name IN ('history_ai', 'history_au', 'history_ad')
+            """) == 3)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
+        try expectHistoryImageHashSchema(database: database)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history") == 2)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history WHERE kind = 'text'") == 1)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history WHERE kind = 'image'") == 1)
+    }
+
+    @Test func historyMigrationFailsWhenImageHashIndexNameAlreadyExists() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createVersion2DatabaseFixture(databaseURL: databaseURL, additionalSQL: """
+            CREATE INDEX idx_history_image_hash
+            ON history (created_at)
+            """)
+
+        do {
+            _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            Issue.record("Expected duplicate idx_history_image_hash migration failure")
+        } catch DatabaseError.sqliteExecutionFailed {
+            // Expected.
+        } catch {
+            Issue.record("Expected SQLite execution failure for duplicate idx_history_image_hash")
+        }
+
+        #expect(try rawIntValue(databaseURL: databaseURL, sql: "PRAGMA user_version") == 2)
     }
 
     @Test func historyMigrationCreatesPinnedItemsIndex() throws {
@@ -572,17 +646,18 @@ struct DatabaseTests {
 
         do {
             let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
-            #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
         }
 
         do {
             let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
-            #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
             #expect(try database.intValue(sql: """
                 SELECT COUNT(*)
                 FROM sqlite_master
                 WHERE type = 'table' AND name = 'history'
                 """) == 1)
+            try expectHistoryImageHashSchema(database: database)
             #expect(try database.intValue(sql: """
                 SELECT COUNT(*)
                 FROM sqlite_master
@@ -632,7 +707,7 @@ struct DatabaseTests {
 
         let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
         #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'alpha'") == 1)
     }
 
@@ -899,7 +974,7 @@ struct DatabaseTests {
 
         let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -930,7 +1005,7 @@ struct DatabaseTests {
 
         let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == expectedLatestUserVersion)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -1014,7 +1089,7 @@ struct DatabaseTests {
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 3")
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 4")
 
         do {
             _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
@@ -1081,6 +1156,46 @@ struct DatabaseTests {
         }
     }
 
+    private func expectHistoryImageHashSchema(database: any DatabaseConnection) throws {
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM pragma_table_info('history')
+            WHERE name = 'image_hash' AND type = 'TEXT' AND "notnull" = 0
+            """) == 1)
+
+        let indexSQL = try database.stringValue(sql: """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_history_image_hash'
+            """)
+        let normalizedSQL = indexSQL.map { normalizedSQL($0) }
+
+        #expect(normalizedSQL?.contains("ON HISTORY (IMAGE_HASH)") == true)
+        #expect(normalizedSQL?.contains("WHERE IMAGE_HASH IS NOT NULL") == true)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM pragma_index_list('history')
+            WHERE name = 'idx_history_image_hash'
+                AND "unique" = 0
+                AND partial = 1
+            """) == 1)
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM pragma_index_info('idx_history_image_hash')
+            """) == 1)
+        #expect(try database.stringValue(sql: """
+            SELECT name
+            FROM pragma_index_info('idx_history_image_hash')
+            WHERE seqno = 0
+            """) == "image_hash")
+    }
+
+    private func normalizedSQL(_ sql: String) -> String {
+        sql.uppercased()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
     private func insertHistoryTextRow(
         database: any DatabaseConnection,
         id: String,
@@ -1144,6 +1259,189 @@ struct DatabaseTests {
             databaseURL: databaseURL,
             setupSQL: "CREATE TABLE legacy_table (id INTEGER PRIMARY KEY)"
         )
+    }
+
+    private func createVersion2DatabaseFixture(
+        databaseURL: URL,
+        additionalSQL: String = ""
+    ) throws {
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                rtf_payload BLOB,
+                image_payload BLOB,
+                image_type TEXT,
+                file_path TEXT,
+                payload_hash TEXT,
+                source_app TEXT,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+                pinned_at TEXT,
+                pinned_order INTEGER NOT NULL DEFAULT 0,
+                CHECK (kind IN ('text', 'image', 'file')),
+                CHECK (
+                    (kind = 'text'
+                        AND text_payload IS NOT NULL
+                        AND length(text_payload) > 0
+                        AND image_payload IS NULL
+                        AND image_type IS NULL
+                        AND file_path IS NULL)
+                    OR
+                    (kind = 'image'
+                        AND image_payload IS NOT NULL
+                        AND image_type IS NOT NULL
+                        AND length(image_type) > 0
+                        AND text_payload IS NULL
+                        AND rtf_payload IS NULL
+                        AND file_path IS NULL)
+                    OR
+                    (kind = 'file'
+                        AND file_path IS NOT NULL
+                        AND length(file_path) > 0
+                        AND text_payload IS NULL
+                        AND rtf_payload IS NULL
+                        AND image_payload IS NULL
+                        AND image_type IS NULL)
+                ),
+                CHECK (
+                    (pinned_at IS NULL AND pinned_order = 0)
+                    OR
+                    (pinned_at IS NOT NULL AND pinned_order > 0)
+                )
+            );
+            CREATE INDEX idx_history_created_at
+            ON history (created_at DESC);
+            CREATE INDEX idx_history_kind_created_at
+            ON history (kind, created_at DESC);
+            CREATE INDEX idx_history_pinned
+            ON history (pinned_order ASC, pinned_at DESC)
+            WHERE pinned_at IS NOT NULL;
+            CREATE INDEX idx_history_payload_hash_kind
+            ON history (payload_hash, kind)
+            WHERE payload_hash IS NOT NULL;
+            CREATE INDEX idx_history_text_payload
+            ON history (text_payload)
+            WHERE kind = 'text' AND text_payload IS NOT NULL;
+            CREATE INDEX idx_history_file_path
+            ON history (file_path)
+            WHERE kind = 'file' AND file_path IS NOT NULL;
+            CREATE TABLE pinned_items (
+                history_id TEXT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
+                pinned_order INTEGER NOT NULL CHECK (pinned_order > 0),
+                pinned_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_pinned_order
+            ON pinned_items (pinned_order ASC, pinned_at DESC);
+            CREATE TABLE settings_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE history_fts
+            USING fts5(
+                history_id UNINDEXED,
+                text_payload,
+                tokenize='unicode61'
+            );
+            CREATE TRIGGER history_ai
+            AFTER INSERT ON history
+            WHEN NEW.kind = 'text' AND NEW.text_payload IS NOT NULL
+            BEGIN
+                INSERT INTO history_fts(history_id, text_payload)
+                VALUES (NEW.id, NEW.text_payload);
+            END;
+            CREATE TRIGGER history_au
+            AFTER UPDATE ON history
+            BEGIN
+                DELETE FROM history_fts
+                WHERE history_id = OLD.id;
+
+                INSERT INTO history_fts(history_id, text_payload)
+                SELECT NEW.id, NEW.text_payload
+                WHERE NEW.kind = 'text' AND NEW.text_payload IS NOT NULL;
+            END;
+            CREATE TRIGGER history_ad
+            AFTER DELETE ON history
+            BEGIN
+                DELETE FROM history_fts
+                WHERE history_id = OLD.id;
+            END;
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                '12121212-1212-1212-1212-121212121212',
+                'text',
+                'fixture text',
+                '2026-05-23T00:00:00Z',
+                12
+            );
+            INSERT INTO history (id, kind, image_payload, image_type, created_at, size_bytes)
+            VALUES (
+                '13131313-1313-1313-1313-131313131313',
+                'image',
+                X'0102',
+                'public.png',
+                '2026-05-23T00:01:00Z',
+                2
+            );
+            \(additionalSQL);
+            PRAGMA user_version = 2
+            """)
+    }
+
+    private func rawIntValue(databaseURL: URL, sql: String) throws -> Int? {
+        try rawStringValue(databaseURL: databaseURL, sql: sql).flatMap(Int.init)
+    }
+
+    private func rawStringValue(databaseURL: URL, sql: String) throws -> String? {
+        var handle: OpaquePointer?
+        let openResult = sqlite3_open_v2(
+            databaseURL.path,
+            &handle,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+
+        guard openResult == SQLITE_OK, let handle else {
+            let message = handle.flatMap { sqlite3_errmsg($0).map { String(cString: $0) } }
+            if let handle {
+                sqlite3_close(handle)
+            }
+            throw DatabaseError.connectionOpenFailed(databaseURL, code: openResult, message: message)
+        }
+
+        defer {
+            sqlite3_close(handle)
+        }
+
+        var statement: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
+        guard prepareResult == SQLITE_OK, let statement else {
+            throw DatabaseError.sqliteQueryFailed(
+                code: sqlite3_extended_errcode(handle),
+                message: sqlite3_errmsg(handle).map { String(cString: $0) }
+            )
+        }
+
+        defer {
+            sqlite3_finalize(statement)
+        }
+
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            guard let text = sqlite3_column_text(statement, 0) else {
+                return nil
+            }
+            return String(cString: text)
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw DatabaseError.sqliteQueryFailed(
+                code: sqlite3_extended_errcode(handle),
+                message: sqlite3_errmsg(handle).map { String(cString: $0) }
+            )
+        }
     }
 
     private func createUnmigratedDatabase(databaseURL: URL, setupSQL: String) throws {

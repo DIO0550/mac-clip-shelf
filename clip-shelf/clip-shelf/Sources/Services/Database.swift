@@ -199,7 +199,8 @@ private enum DatabaseMigrationFactory {
     private static var allMigrations: [any DatabaseMigration] {
         [
             V1HistoryMigration(),
-            V2HistoryFTSMigration()
+            V2HistoryFTSMigration(),
+            V3ImageHashMigration()
         ]
     }
 
@@ -338,6 +339,27 @@ private struct V2HistoryFTSMigration: DatabaseMigration {
             try HistoryFTSSchema.create(database: database)
             try database.execute(sql: HistoryFTSSchema.clearSQL)
             try database.execute(sql: HistoryFTSSchema.backfillSQL)
+            try database.execute(sql: "PRAGMA user_version = \(targetVersion)")
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
+    }
+}
+
+private struct V3ImageHashMigration: DatabaseMigration {
+    let targetVersion = 3
+
+    func apply(database: SQLiteDatabase) throws {
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try database.execute(sql: "ALTER TABLE history ADD COLUMN image_hash TEXT")
+            try database.execute(sql: """
+                CREATE INDEX idx_history_image_hash
+                ON history (image_hash)
+                WHERE image_hash IS NOT NULL
+                """)
             try database.execute(sql: "PRAGMA user_version = \(targetVersion)")
             try database.execute(sql: "COMMIT")
         } catch {
