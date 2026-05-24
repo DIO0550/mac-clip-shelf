@@ -191,13 +191,15 @@ private enum DatabaseMigrator {
 
         try V1PinnedItemsRepair().apply(database: database)
         try V1SettingsKVRepair().apply(database: database)
+        try V2HistoryFTSRepair().apply(database: database)
     }
 }
 
 private enum DatabaseMigrationFactory {
     private static var allMigrations: [any DatabaseMigration] {
         [
-            V1HistoryMigration()
+            V1HistoryMigration(),
+            V2HistoryFTSMigration()
         ]
     }
 
@@ -327,6 +329,24 @@ private struct V1HistoryMigration: DatabaseMigration {
 
 }
 
+private struct V2HistoryFTSMigration: DatabaseMigration {
+    let targetVersion = 2
+
+    func apply(database: SQLiteDatabase) throws {
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try HistoryFTSSchema.create(database: database)
+            try database.execute(sql: HistoryFTSSchema.clearSQL)
+            try database.execute(sql: HistoryFTSSchema.backfillSQL)
+            try database.execute(sql: "PRAGMA user_version = \(targetVersion)")
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
+    }
+}
+
 private struct V1PinnedItemsRepair {
     func apply(database: SQLiteDatabase) throws {
         try database.execute(sql: PinnedItemsSchema.createTableSQL)
@@ -359,6 +379,25 @@ private struct V1SettingsKVRepair {
     }
 }
 
+private struct V2HistoryFTSRepair {
+    func apply(database: SQLiteDatabase) throws {
+        guard try HistoryFTSSchema.needsRepair(database: database) else {
+            return
+        }
+
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try HistoryFTSSchema.recreate(database: database)
+            try database.execute(sql: HistoryFTSSchema.clearSQL)
+            try database.execute(sql: HistoryFTSSchema.backfillSQL)
+            try database.execute(sql: "COMMIT")
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
+    }
+}
+
 private enum PinnedItemsSchema {
     static let createTableSQL = """
         CREATE TABLE IF NOT EXISTS pinned_items (
@@ -374,6 +413,170 @@ private enum PinnedItemsSchema {
         ON pinned_items (pinned_order ASC, pinned_at DESC)
         """
     ]
+}
+
+private enum HistoryFTSSchema {
+    static let tableName = "history_fts"
+    static let triggerNames = [
+        "history_ai",
+        "history_au",
+        "history_ad"
+    ]
+
+    static let createTableSQL = """
+        CREATE VIRTUAL TABLE IF NOT EXISTS history_fts
+        USING fts5(
+            history_id UNINDEXED,
+            text_payload,
+            tokenize='unicode61'
+        )
+        """
+
+    static let createInsertTriggerSQL = """
+        CREATE TRIGGER IF NOT EXISTS history_ai
+        AFTER INSERT ON history
+        WHEN NEW.kind = 'text' AND NEW.text_payload IS NOT NULL
+        BEGIN
+            INSERT INTO history_fts(history_id, text_payload)
+            VALUES (NEW.id, NEW.text_payload);
+        END
+        """
+
+    static let createUpdateTriggerSQL = """
+        CREATE TRIGGER IF NOT EXISTS history_au
+        AFTER UPDATE ON history
+        BEGIN
+            DELETE FROM history_fts
+            WHERE history_id = OLD.id;
+
+            INSERT INTO history_fts(history_id, text_payload)
+            SELECT NEW.id, NEW.text_payload
+            WHERE NEW.kind = 'text' AND NEW.text_payload IS NOT NULL;
+        END
+        """
+
+    static let createDeleteTriggerSQL = """
+        CREATE TRIGGER IF NOT EXISTS history_ad
+        AFTER DELETE ON history
+        BEGIN
+            DELETE FROM history_fts
+            WHERE history_id = OLD.id;
+        END
+        """
+
+    static let clearSQL = "DELETE FROM history_fts"
+
+    static let backfillSQL = """
+        INSERT INTO history_fts(history_id, text_payload)
+        SELECT id, text_payload
+        FROM history
+        WHERE kind = 'text' AND text_payload IS NOT NULL
+        """
+
+    private static var createTriggerSQL: [String] {
+        [
+            createInsertTriggerSQL,
+            createUpdateTriggerSQL,
+            createDeleteTriggerSQL
+        ]
+    }
+
+    private static var dropTriggerSQL: [String] {
+        triggerNames.map { "DROP TRIGGER IF EXISTS \($0)" }
+    }
+
+    static func create(database: SQLiteDatabase) throws {
+        try database.execute(sql: createTableSQL)
+
+        for sql in createTriggerSQL {
+            try database.execute(sql: sql)
+        }
+    }
+
+    static func recreate(database: SQLiteDatabase) throws {
+        try database.execute(sql: createTableSQL)
+
+        for sql in dropTriggerSQL {
+            try database.execute(sql: sql)
+        }
+
+        for sql in createTriggerSQL {
+            try database.execute(sql: sql)
+        }
+    }
+
+    static func needsRepair(database: SQLiteDatabase) throws -> Bool {
+        guard let tableSQL = try database.stringValue(sql: """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = '\(tableName)'
+            """) else {
+            return true
+        }
+
+        guard isExpectedTableSQL(tableSQL) else {
+            throw DatabaseError.sqliteUnexpectedResult
+        }
+
+        for triggerName in triggerNames {
+            guard let triggerSQL = try database.stringValue(sql: """
+                SELECT sql
+                FROM sqlite_master
+                WHERE type = 'trigger' AND name = '\(triggerName)'
+                """) else {
+                return true
+            }
+
+            guard isExpectedTriggerSQL(triggerSQL, triggerName: triggerName) else {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func isExpectedTableSQL(_ sql: String) -> Bool {
+        let normalized = normalizedSQL(sql)
+
+        return normalized.contains("CREATE VIRTUAL TABLE HISTORY_FTS USING FTS5")
+            && normalized.contains("HISTORY_ID UNINDEXED")
+            && normalized.contains("TEXT_PAYLOAD")
+            && normalized.contains("TOKENIZE='UNICODE61'")
+    }
+
+    private static func isExpectedTriggerSQL(_ sql: String, triggerName: String) -> Bool {
+        let normalized = normalizedSQL(sql)
+
+        switch triggerName {
+        case "history_ai":
+            return normalized.contains("HISTORY_AI")
+                && normalized.contains("AFTER INSERT ON HISTORY")
+                && normalized.contains("NEW.KIND = 'TEXT'")
+                && normalized.contains("NEW.TEXT_PAYLOAD IS NOT NULL")
+                && normalized.contains("INSERT INTO HISTORY_FTS")
+        case "history_au":
+            return normalized.contains("HISTORY_AU")
+                && normalized.contains("AFTER UPDATE ON HISTORY")
+                && normalized.contains("DELETE FROM HISTORY_FTS")
+                && normalized.contains("WHERE HISTORY_ID = OLD.ID")
+                && normalized.contains("SELECT NEW.ID, NEW.TEXT_PAYLOAD")
+                && normalized.contains("NEW.KIND = 'TEXT'")
+                && normalized.contains("NEW.TEXT_PAYLOAD IS NOT NULL")
+        case "history_ad":
+            return normalized.contains("HISTORY_AD")
+                && normalized.contains("AFTER DELETE ON HISTORY")
+                && normalized.contains("DELETE FROM HISTORY_FTS")
+                && normalized.contains("WHERE HISTORY_ID = OLD.ID")
+        default:
+            return false
+        }
+    }
+
+    private static func normalizedSQL(_ sql: String) -> String {
+        sql.uppercased()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
 }
 
 private enum SettingsKVSchema {
