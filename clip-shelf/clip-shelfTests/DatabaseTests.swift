@@ -1168,10 +1168,10 @@ struct DatabaseTests {
             FROM sqlite_master
             WHERE type = 'index' AND name = 'idx_history_image_hash'
             """)
-        let normalizedSQL = indexSQL.map { normalizedSQL($0) }
+        let normalizedIndexSQL = indexSQL.map { normalizedSQL($0) }
 
-        #expect(normalizedSQL?.contains("ON HISTORY (IMAGE_HASH)") == true)
-        #expect(normalizedSQL?.contains("WHERE IMAGE_HASH IS NOT NULL") == true)
+        #expect(normalizedIndexSQL?.contains("ON HISTORY (IMAGE_HASH)") == true)
+        #expect(normalizedIndexSQL?.contains("WHERE IMAGE_HASH IS NOT NULL") == true)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM pragma_index_list('history')
