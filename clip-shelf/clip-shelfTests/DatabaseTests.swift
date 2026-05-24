@@ -113,7 +113,7 @@ struct DatabaseTests {
             databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -149,6 +149,37 @@ struct DatabaseTests {
             FROM sqlite_master
             WHERE type = 'table' AND name = 'settings_kv'
             """) == 1)
+    }
+
+    @Test func historyMigrationCreatesFTSTable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'history_fts'
+            """) == 1)
+    }
+
+    @Test func historyMigrationCreatesFTSTriggers() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        #expect(try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'trigger'
+                AND name IN ('history_ai', 'history_au', 'history_ad')
+            """) == 3)
     }
 
     @Test func historyMigrationSeedsDefaultSettings() throws {
@@ -268,6 +299,7 @@ struct DatabaseTests {
             """)
 
         #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history") == 1)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'hello'") == 1)
     }
 
     @Test func historyRejectsInvalidKind() throws {
@@ -540,12 +572,12 @@ struct DatabaseTests {
 
         do {
             let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
-            #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
         }
 
         do {
             let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
-            #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+            #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
             #expect(try database.intValue(sql: """
                 SELECT COUNT(*)
                 FROM sqlite_master
@@ -567,6 +599,285 @@ struct DatabaseTests {
                 FROM sqlite_master
                 WHERE type = 'index' AND name = 'idx_pinned_order'
                 """) == 1)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'history_fts'
+                """) == 1)
+        }
+    }
+
+    @Test func historyFTSBackfillsExistingV1TextRows() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO history (id, kind, text_payload, created_at)
+            VALUES (
+                '10101010-1010-1010-1010-101010101010',
+                'text',
+                'alpha beta',
+                '2026-05-23T00:00:00Z'
+            );
+            PRAGMA user_version = 1
+            """)
+
+        let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'alpha'") == 1)
+    }
+
+    @Test func historyFTSInsertTriggerIndexesTextRows() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try insertHistoryTextRow(
+            database: database,
+            id: "20202020-2020-2020-2020-202020202020",
+            text: "searchable inserted"
+        )
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'searchable'") == 1)
+    }
+
+    @Test func historyFTSUpdateTriggerReplacesTerms() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try insertHistoryTextRow(
+            database: database,
+            id: "30303030-3030-3030-3030-303030303030",
+            text: "original"
+        )
+        try database.execute(sql: """
+            UPDATE history
+            SET text_payload = 'replacement'
+            WHERE id = '30303030-3030-3030-3030-303030303030'
+            """)
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'original'") == 0)
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'replacement'") == 1)
+    }
+
+    @Test func historyFTSDeleteTriggerRemovesRows() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try insertHistoryTextRow(
+            database: database,
+            id: "40404040-4040-4040-4040-404040404040",
+            text: "removeable"
+        )
+        try database.execute(sql: "DELETE FROM history WHERE id = '40404040-4040-4040-4040-404040404040'")
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'removeable'") == 0)
+    }
+
+    @Test func historyFTSExcludesNonTextRows() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try SQLiteDatabaseConnector().makeConnection(
+            databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        )
+
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, image_payload, image_type, created_at, size_bytes)
+            VALUES (
+                '50505050-5050-5050-5050-505050505050',
+                'image',
+                X'0102',
+                'public.png',
+                '2026-05-23T00:00:00Z',
+                2
+            )
+            """)
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, file_path, created_at, size_bytes)
+            VALUES (
+                '60606060-6060-6060-6060-606060606060',
+                'file',
+                '/tmp/example.txt',
+                '2026-05-23T00:00:00Z',
+                16
+            )
+            """)
+
+        #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts") == 0)
+    }
+
+    @Test func historyFTSDoesNotDuplicateRowsAcrossReconnects() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try insertHistoryTextRow(
+                database: database,
+                id: "70707070-7070-7070-7070-707070707070",
+                text: "single"
+            )
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'single'") == 1)
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'single'") == 1)
+        }
+    }
+
+    @Test func historyFTSRepairRecreatesMissingTable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try insertHistoryTextRow(
+                database: database,
+                id: "80808080-8080-8080-8080-808080808080",
+                text: "repairable"
+            )
+            try database.execute(sql: "DROP TRIGGER history_ai")
+            try database.execute(sql: "DROP TRIGGER history_au")
+            try database.execute(sql: "DROP TRIGGER history_ad")
+            try database.execute(sql: "DROP TABLE history_fts")
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'repairable'") == 1)
+        }
+    }
+
+    @Test func historyFTSRepairRecreatesMissingTriggerSet() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try database.execute(sql: "DROP TRIGGER history_au")
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'trigger'
+                    AND name IN ('history_ai', 'history_au', 'history_ad')
+                """) == 3)
+        }
+    }
+
+    @Test func historyFTSRepairRecreatesMalformedTriggerSet() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try database.execute(sql: "DROP TRIGGER history_ai")
+            try database.execute(sql: """
+                CREATE TRIGGER history_ai
+                AFTER INSERT ON history
+                BEGIN
+                    SELECT 1;
+                END
+                """)
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try insertHistoryTextRow(
+                database: database,
+                id: "90909090-9090-9090-9090-909090909090",
+                text: "triggerfixed"
+            )
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'triggerfixed'") == 1)
+        }
+    }
+
+    @Test func historyFTSRepairRejectsMalformedTable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: """
+            CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                text_payload TEXT,
+                created_at TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE history_fts (
+                history_id TEXT,
+                text_payload TEXT
+            );
+            PRAGMA user_version = 2
+            """)
+
+        do {
+            _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            Issue.record("Expected malformed history_fts table to be rejected")
+        } catch DatabaseError.sqliteUnexpectedResult {
+            // Expected.
+        } catch {
+            Issue.record("Expected sqliteUnexpectedResult for malformed history_fts table")
+        }
+    }
+
+    @Test func historyFTSRepairIsIdempotentAcrossReconnects() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            try insertHistoryTextRow(
+                database: database,
+                id: "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+                text: "stable"
+            )
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'stable'") == 1)
+        }
+
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
+            #expect(try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH 'stable'") == 1)
         }
     }
 
@@ -588,7 +899,7 @@ struct DatabaseTests {
 
         let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -619,7 +930,7 @@ struct DatabaseTests {
 
         let database = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
 
-        #expect(try database.intValue(sql: "PRAGMA user_version") == 1)
+        #expect(try database.intValue(sql: "PRAGMA user_version") == 2)
         #expect(try database.intValue(sql: """
             SELECT COUNT(*)
             FROM sqlite_master
@@ -703,7 +1014,7 @@ struct DatabaseTests {
         defer { removeTemporaryDirectory(temporaryDirectory) }
 
         let databaseURL = temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 2")
+        try createUnmigratedDatabase(databaseURL: databaseURL, setupSQL: "PRAGMA user_version = 3")
 
         do {
             _ = try SQLiteDatabaseConnector().makeConnection(databaseURL: databaseURL)
@@ -770,10 +1081,31 @@ struct DatabaseTests {
         }
     }
 
+    private func insertHistoryTextRow(
+        database: any DatabaseConnection,
+        id: String,
+        text: String
+    ) throws {
+        try database.execute(sql: """
+            INSERT INTO history (id, kind, text_payload, created_at, size_bytes)
+            VALUES (
+                '\(id)',
+                'text',
+                '\(sqlLiteral(text))',
+                '2026-05-23T00:00:00Z',
+                \(text.count)
+            )
+            """)
+    }
+
+    private func sqlLiteral(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
+    }
+
     private func expectedSettingsDefaultRows() -> [(key: String, value: String)] {
         let settings = Settings.default
 
-        [
+        return [
             (SettingKey.launchAtLogin.rawValue, storageValue(settings.launchAtLogin)),
             (SettingKey.historyLimit.rawValue, storageValue(settings.historyLimit)),
             (SettingKey.respectConcealedType.rawValue, storageValue(settings.respectConcealedType)),
