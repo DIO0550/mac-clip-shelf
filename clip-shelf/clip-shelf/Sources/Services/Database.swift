@@ -8,12 +8,53 @@
 import Foundation
 import SQLite3
 
+enum DatabaseValue: Equatable, Sendable {
+    case null
+    case integer(Int64)
+    case real(Double)
+    case text(String)
+    case blob(Data)
+}
+
+struct DatabaseRow: Equatable, Sendable {
+    private let values: [String: DatabaseValue]
+
+    init(values: [String: DatabaseValue]) {
+        self.values = values
+    }
+
+    func string(_ column: String) -> String? {
+        guard case let .text(value) = values[column] else {
+            return nil
+        }
+
+        return value
+    }
+
+    func int(_ column: String) -> Int? {
+        guard case let .integer(value) = values[column] else {
+            return nil
+        }
+
+        return Int(exactly: value)
+    }
+
+    func data(_ column: String) -> Data? {
+        guard case let .blob(value) = values[column] else {
+            return nil
+        }
+
+        return value
+    }
+}
+
 protocol DatabaseConnection: Sendable {
     var databaseURL: URL { get }
 
     func execute(sql: String) throws
     func intValue(sql: String) throws -> Int?
     func stringValue(sql: String) throws -> String?
+    func rows(sql: String) throws -> [DatabaseRow]
 }
 
 protocol DatabaseConnecting: Sendable {
@@ -167,6 +208,81 @@ final class SQLiteDatabase: DatabaseConnection, @unchecked Sendable {
                 code: sqlite3_extended_errcode(handle),
                 message: sqlite3_errmsg(handle).map { String(cString: $0) }
             )
+        }
+    }
+
+    nonisolated func rows(sql: String) throws -> [DatabaseRow] {
+        var statement: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
+
+        guard prepareResult == SQLITE_OK, let statement else {
+            throw DatabaseError.sqliteQueryFailed(
+                code: sqlite3_extended_errcode(handle),
+                message: sqlite3_errmsg(handle).map { String(cString: $0) }
+            )
+        }
+
+        defer {
+            sqlite3_finalize(statement)
+        }
+
+        var rows: [DatabaseRow] = []
+
+        while true {
+            let stepResult = sqlite3_step(statement)
+
+            switch stepResult {
+            case SQLITE_ROW:
+                rows.append(readRow(from: statement))
+            case SQLITE_DONE:
+                return rows
+            default:
+                throw DatabaseError.sqliteQueryFailed(
+                    code: sqlite3_extended_errcode(handle),
+                    message: sqlite3_errmsg(handle).map { String(cString: $0) }
+                )
+            }
+        }
+    }
+
+    private nonisolated func readRow(from statement: OpaquePointer) -> DatabaseRow {
+        let columnCount = sqlite3_column_count(statement)
+        var values: [String: DatabaseValue] = [:]
+        values.reserveCapacity(Int(columnCount))
+
+        for index in 0..<columnCount {
+            guard let columnName = sqlite3_column_name(statement, index) else {
+                continue
+            }
+
+            values[String(cString: columnName)] = readValue(from: statement, at: index)
+        }
+
+        return DatabaseRow(values: values)
+    }
+
+    private nonisolated func readValue(
+        from statement: OpaquePointer,
+        at index: Int32
+    ) -> DatabaseValue {
+        switch sqlite3_column_type(statement, index) {
+        case SQLITE_INTEGER:
+            return .integer(sqlite3_column_int64(statement, index))
+        case SQLITE_FLOAT:
+            return .real(sqlite3_column_double(statement, index))
+        case SQLITE_TEXT:
+            guard let text = sqlite3_column_text(statement, index) else {
+                return .null
+            }
+            return .text(String(cString: text))
+        case SQLITE_BLOB:
+            let byteCount = Int(sqlite3_column_bytes(statement, index))
+            guard byteCount > 0, let bytes = sqlite3_column_blob(statement, index) else {
+                return .blob(Data())
+            }
+            return .blob(Data(bytes: bytes, count: byteCount))
+        default:
+            return .null
         }
     }
 }
