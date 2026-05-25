@@ -13,7 +13,7 @@ final class AppDependencies {
         // Future dependency wiring order:
         // 1. ModelContainer.clipShelf()
         // 2. SettingsStore()
-        // 3. HistoryService(container:)
+        // 3. HistoryService(database:)
         // 4. PasteService(historyService:)
         // 5. ClipboardMonitor(historyService:settings:)
         // 6. HotkeyService(settings:)
