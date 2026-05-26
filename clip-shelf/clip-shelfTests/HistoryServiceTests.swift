@@ -169,6 +169,177 @@ struct HistoryServiceTests {
         cancellable.cancel()
     }
 
+
+    @Test func addSavesTextItemAndReadsItBack() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let createdAt = date("2026-05-24T00:00:00Z")
+        let lastUsedAt = date("2026-05-24T00:01:00Z")
+        let pinnedAt = date("2026-05-24T00:02:00Z")
+        let item = HistoryItem(
+            id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
+            content: .text("hello", rtf: nil),
+            representations: [HistoryItem.PasteboardRepresentation(typeIdentifier: "public.utf8-plain-text", data: Data([0x01]))],
+            sourceApp: "com.example.Text'sApp",
+            createdAt: createdAt,
+            lastUsedAt: lastUsedAt,
+            sizeBytes: 999,
+            pinnedAt: pinnedAt,
+            pinnedOrder: 2
+        )
+
+        let saved = try service.add(item)
+        let recentItems = try service.recentItems(limit: 5)
+
+        #expect(saved.id == item.id)
+        #expect(saved.content == .text("hello", rtf: nil))
+        #expect(saved.sourceApp == "com.example.Text'sApp")
+        #expect(saved.createdAt == createdAt)
+        #expect(saved.lastUsedAt == lastUsedAt)
+        #expect(saved.sizeBytes == 5)
+        #expect(saved.pinnedAt == pinnedAt)
+        #expect(saved.pinnedOrder == 2)
+        #expect(saved.representations.isEmpty)
+        #expect(recentItems == [saved])
+    }
+
+    @Test func addPublishesOneChangeForSuccessfulTextInsert() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        _ = try service.add(textItem(text: "hello", createdAt: "2026-05-24T00:00:00Z"))
+
+        #expect(eventCount == 1)
+        cancellable.cancel()
+    }
+
+    @Test func addSavesRTFAndEscapesTextApostrophes() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let rtf = Data([0x7b, 0x5c, 0x72, 0x74, 0x66])
+
+        let saved = try service.add(textItem(text: "don't", rtf: rtf, createdAt: "2026-05-24T00:01:00Z"))
+
+        #expect(saved.content == .text("don't", rtf: rtf))
+        #expect(saved.sizeBytes == "don't".utf8.count + rtf.count)
+    }
+
+    @Test func addDeduplicatesTextByExactTextAndTouchesCreatedAt() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+        let first = try service.add(textItem(text: "same", rtf: Data([0x01]), createdAt: "2026-05-24T00:00:00Z"))
+        let secondDate = date("2026-05-24T00:10:00Z")
+        let second = try service.add(textItem(text: "same", rtf: Data([0x02]), createdAt: "2026-05-24T00:10:00Z"))
+        let different = try service.add(textItem(text: "different", createdAt: "2026-05-24T00:11:00Z"))
+        let items = try service.recentItems(limit: 10)
+
+        #expect(second.id == first.id)
+        #expect(second.content == first.content)
+        #expect(second.createdAt == secondDate)
+        #expect(items.count == 2)
+        #expect(items.map(\.id).contains(first.id))
+        #expect(items.map(\.id).contains(different.id))
+        #expect(eventCount == 3)
+        cancellable.cancel()
+    }
+
+    @Test func addSavesAndDeduplicatesFilesByLiteralPath() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let first = try service.add(fileItem(path: "/tmp/a", createdAt: "2026-05-24T00:00:00Z"))
+        let duplicate = try service.add(fileItem(path: "/tmp/a", createdAt: "2026-05-24T00:01:00Z"))
+        let unnormalized = try service.add(fileItem(path: "/tmp/./a", createdAt: "2026-05-24T00:02:00Z"))
+        let apostrophePath = try service.add(fileItem(path: "/tmp/don't/a", createdAt: "2026-05-24T00:03:00Z"))
+        let textWithSameValue = try service.add(textItem(text: "/tmp/a", createdAt: "2026-05-24T00:04:00Z"))
+        let items = try service.recentItems(limit: 10)
+
+        #expect(first.content == .file(path: "/tmp/a"))
+        #expect(first.sizeBytes == "/tmp/a".utf8.count)
+        #expect(duplicate.id == first.id)
+        #expect(duplicate.createdAt == date("2026-05-24T00:01:00Z"))
+        #expect(unnormalized.id != first.id)
+        #expect(apostrophePath.content == .file(path: "/tmp/don't/a"))
+        #expect(textWithSameValue.id != first.id)
+        #expect(items.count == 4)
+    }
+
+    @Test func addSavesImagesWithPayloadHashAndDeduplicatesByBytes() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let first = try service.add(imageItem(data: Data([0x89, 0x50]), createdAt: "2026-05-24T00:00:00Z"))
+        let duplicate = try service.add(imageItem(data: Data([0x89, 0x50]), createdAt: "2026-05-24T00:01:00Z"))
+        let different = try service.add(imageItem(data: Data([0x89, 0x51]), createdAt: "2026-05-24T00:02:00Z"))
+        let empty = try service.add(imageItem(data: Data(), createdAt: "2026-05-24T00:03:00Z"))
+        let emptyDuplicate = try service.add(imageItem(data: Data(), createdAt: "2026-05-24T00:04:00Z"))
+        let payloadHash = try database.stringValue(sql: "SELECT payload_hash FROM history WHERE id = '\(first.id.uuidString)'")
+        let imageHash = try database.stringValue(sql: "SELECT image_hash FROM history WHERE id = '\(first.id.uuidString)'")
+
+        #expect(first.content == .image(Data([0x89, 0x50]), typeIdentifier: "public.png"))
+        #expect(first.payloadHash != nil)
+        #expect(first.payloadHash == payloadHash)
+        #expect(imageHash == nil)
+        #expect(duplicate.id == first.id)
+        #expect(duplicate.createdAt == date("2026-05-24T00:01:00Z"))
+        #expect(different.id != first.id)
+        #expect(empty.content == .image(Data(), typeIdentifier: "public.png"))
+        #expect(emptyDuplicate.id == empty.id)
+    }
+
+    @Test func addThrowsForInvalidContentAndDoesNotPublishChanges() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { _ = try service.add(textItem(text: "", createdAt: "2026-05-24T00:00:00Z")) }
+        expectThrows { _ = try service.add(fileItem(path: "", createdAt: "2026-05-24T00:01:00Z")) }
+        expectThrows { _ = try service.add(imageItem(data: Data([0x01]), typeIdentifier: "", createdAt: "2026-05-24T00:02:00Z")) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func addPropagatesDatabaseErrors() {
+        let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
+        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        expectThrows { _ = try HistoryService(database: queryFailingDatabase).add(textItem(text: "hello", createdAt: "2026-05-24T00:00:00Z")) }
+
+        let executeError = DatabaseError.sqliteExecutionFailed(code: 19, message: "constraint failed")
+        let executeFailingDatabase = ExecuteFailingDatabase(error: executeError)
+        expectThrows { _ = try HistoryService(database: executeFailingDatabase).add(textItem(text: "hello", createdAt: "2026-05-24T00:00:00Z")) }
+    }
+
     private func makeDatabase(temporaryDirectory: URL) throws -> any DatabaseConnection {
         try SQLiteDatabaseConnector().makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
@@ -283,6 +454,51 @@ struct HistoryServiceTests {
         return "X'\(hex)'"
     }
 
+
+    private func textItem(
+        text: String,
+        rtf: Data? = nil,
+        createdAt: String
+    ) -> HistoryItem {
+        HistoryItem(
+            id: UUID(),
+            content: .text(text, rtf: rtf),
+            createdAt: date(createdAt)
+        )
+    }
+
+    private func imageItem(
+        data: Data,
+        typeIdentifier: String = "public.png",
+        createdAt: String
+    ) -> HistoryItem {
+        HistoryItem(
+            id: UUID(),
+            content: .image(data, typeIdentifier: typeIdentifier),
+            createdAt: date(createdAt)
+        )
+    }
+
+    private func fileItem(path: String, createdAt: String) -> HistoryItem {
+        HistoryItem(
+            id: UUID(),
+            content: .file(path: path),
+            createdAt: date(createdAt)
+        )
+    }
+
+    private func date(_ string: String) -> Date {
+        ISO8601DateFormatter().date(from: string)!
+    }
+
+    private func expectThrows(_ operation: () throws -> Void) {
+        do {
+            try operation()
+            Issue.record("Expected operation to throw")
+        } catch {
+        }
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("clip-shelf-tests", isDirectory: true)
@@ -330,5 +546,31 @@ private final class QueryCountingDatabase: DatabaseConnection, @unchecked Sendab
         }
 
         return rowResult
+    }
+}
+
+
+private final class ExecuteFailingDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/execute-failing.sqlite")
+    private let error: DatabaseError
+
+    init(error: DatabaseError) {
+        self.error = error
+    }
+
+    func execute(sql: String) throws {
+        throw error
+    }
+
+    func intValue(sql: String) throws -> Int? {
+        nil
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        []
     }
 }

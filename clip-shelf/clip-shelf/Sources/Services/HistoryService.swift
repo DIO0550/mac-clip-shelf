@@ -6,11 +6,28 @@
 //
 
 import Combine
+import CryptoKit
 import Foundation
 
 final class HistoryService: @unchecked Sendable {
     private let database: any DatabaseConnection
     private let changesSubject = PassthroughSubject<Void, Never>()
+    private static let historyColumns = """
+        id,
+        kind,
+        text_payload,
+        rtf_payload,
+        image_payload,
+        image_type,
+        file_path,
+        payload_hash,
+        source_app,
+        created_at,
+        last_used_at,
+        size_bytes,
+        pinned_at,
+        pinned_order
+        """
 
     var changes: AnyPublisher<Void, Never> {
         changesSubject.eraseToAnyPublisher()
@@ -34,6 +51,62 @@ final class HistoryService: @unchecked Sendable {
 
         return try database.rows(sql: """
             SELECT
+                \(Self.historyColumns)
+            FROM history
+            ORDER BY
+                CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
+                created_at DESC
+            LIMIT \(limit)
+            """)
+            .map(mapRow)
+    }
+
+    func add(_ item: HistoryItem) throws -> HistoryItem {
+        if let duplicate = try findDuplicate(for: item) {
+            let updated = try touchExisting(duplicate, createdAt: item.createdAt)
+            notifyChanged()
+            return updated
+        }
+
+        try insert(item)
+        let saved = try fetchByID(item.id)
+        notifyChanged()
+        return saved
+    }
+
+    func notifyChanged() {
+        changesSubject.send()
+    }
+
+    private func findDuplicate(for item: HistoryItem) throws -> HistoryItem? {
+        let predicate: String
+
+        switch item.content {
+        case let .text(text, _):
+            predicate = "kind = 'text' AND text_payload = \(Self.sqlString(text))"
+        case let .image(data, typeIdentifier):
+            guard !typeIdentifier.isEmpty else {
+                return nil
+            }
+            predicate = "kind = 'image' AND payload_hash = \(Self.sqlString(Self.imagePayloadHash(data)))"
+        case let .file(path):
+            predicate = "kind = 'file' AND file_path = \(Self.sqlString(path))"
+        }
+
+        return try firstHistoryItem("""
+            SELECT
+                \(Self.historyColumns)
+            FROM history
+            WHERE \(predicate)
+            LIMIT 1
+            """)
+    }
+
+    private func insert(_ item: HistoryItem) throws {
+        let payload = Self.payloadValues(for: item)
+
+        try database.execute(sql: """
+            INSERT INTO history (
                 id,
                 kind,
                 text_payload,
@@ -48,17 +121,52 @@ final class HistoryService: @unchecked Sendable {
                 size_bytes,
                 pinned_at,
                 pinned_order
-            FROM history
-            ORDER BY
-                CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
-                created_at DESC
-            LIMIT \(limit)
+            )
+            VALUES (
+                \(Self.sqlString(item.id.uuidString)),
+                \(Self.sqlString(item.kind.rawValue)),
+                \(payload.text),
+                \(payload.rtf),
+                \(payload.image),
+                \(payload.imageType),
+                \(payload.filePath),
+                \(payload.payloadHash),
+                \(Self.sqlNullableString(item.sourceApp)),
+                \(Self.sqlDate(item.createdAt)),
+                \(Self.sqlNullableDate(item.lastUsedAt)),
+                \(payload.sizeBytes),
+                \(Self.sqlNullableDate(item.pinnedAt)),
+                \(item.pinnedOrder)
+            )
             """)
-            .map(mapRow)
     }
 
-    func notifyChanged() {
-        changesSubject.send()
+    private func touchExisting(_ item: HistoryItem, createdAt: Date) throws -> HistoryItem {
+        try database.execute(sql: """
+            UPDATE history
+            SET created_at = \(Self.sqlDate(createdAt))
+            WHERE id = \(Self.sqlString(item.id.uuidString))
+            """)
+
+        return try fetchByID(item.id)
+    }
+
+    private func fetchByID(_ id: UUID) throws -> HistoryItem {
+        guard let item = try firstHistoryItem("""
+            SELECT
+                \(Self.historyColumns)
+            FROM history
+            WHERE id = \(Self.sqlString(id.uuidString))
+            LIMIT 1
+            """) else {
+            throw HistoryError.corruption
+        }
+
+        return item
+    }
+
+    private func firstHistoryItem(_ sql: String) throws -> HistoryItem? {
+        try database.rows(sql: sql).first.map(mapRow)
     }
 
     private func mapRow(_ row: DatabaseRow) throws -> HistoryItem {
@@ -125,5 +233,87 @@ final class HistoryService: @unchecked Sendable {
 
     private func date(from string: String) -> Date? {
         ISO8601DateFormatter().date(from: string)
+    }
+
+    private static func payloadValues(for item: HistoryItem) -> (
+        text: String,
+        rtf: String,
+        image: String,
+        imageType: String,
+        filePath: String,
+        payloadHash: String,
+        sizeBytes: Int
+    ) {
+        switch item.content {
+        case let .text(text, rtf):
+            return (
+                sqlString(text),
+                sqlBlob(rtf),
+                "NULL",
+                "NULL",
+                "NULL",
+                sqlNullableString(item.payloadHash),
+                text.utf8.count + (rtf?.count ?? 0)
+            )
+        case let .image(data, typeIdentifier):
+            return (
+                "NULL",
+                "NULL",
+                sqlBlob(data),
+                sqlString(typeIdentifier),
+                "NULL",
+                sqlString(imagePayloadHash(data)),
+                data.count
+            )
+        case let .file(path):
+            return (
+                "NULL",
+                "NULL",
+                "NULL",
+                "NULL",
+                sqlString(path),
+                sqlNullableString(item.payloadHash),
+                path.utf8.count
+            )
+        }
+    }
+
+    private static func imagePayloadHash(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func sqlString(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+
+    private static func sqlNullableString(_ value: String?) -> String {
+        guard let value else {
+            return "NULL"
+        }
+
+        return sqlString(value)
+    }
+
+    private static func sqlBlob(_ data: Data?) -> String {
+        guard let data else {
+            return "NULL"
+        }
+
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        return "X'\(hex)'"
+    }
+
+    private static func sqlDate(_ date: Date) -> String {
+        sqlString(ISO8601DateFormatter().string(from: date))
+    }
+
+    private static func sqlNullableDate(_ date: Date?) -> String {
+        guard let date else {
+            return "NULL"
+        }
+
+        return sqlDate(date)
     }
 }
