@@ -330,6 +330,164 @@ struct HistoryServiceTests {
         cancellable.cancel()
     }
 
+
+    @Test func addDoesNotPruneWhenCountEqualsLimit() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(2))
+
+        let first = try service.add(textItem(text: "first", createdAt: "2026-05-24T00:00:00Z"))
+        let second = try service.add(textItem(text: "second", createdAt: "2026-05-24T00:01:00Z"))
+
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [first.id.uuidString, second.id.uuidString])
+    }
+
+    @Test func addPrunesOldestUnpinnedItemsWhenLimitIsExceeded() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(2))
+
+        let first = try service.add(textItem(text: "first", createdAt: "2026-05-24T00:00:00Z"))
+        let second = try service.add(textItem(text: "second", createdAt: "2026-05-24T00:01:00Z"))
+        let third = try service.add(textItem(text: "third", createdAt: "2026-05-24T00:02:00Z"))
+
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [second.id.uuidString, third.id.uuidString])
+        #expect(try containsHistoryID(first.id.uuidString, database: database) == false)
+    }
+
+    @Test func addDoesNotPruneOldPinnedItems() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(2))
+
+        let pinned = try service.add(textItem(
+            text: "pinned",
+            createdAt: "2026-05-24T00:00:00Z",
+            pinnedAt: "2026-05-24T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        let unpinnedOld = try service.add(textItem(text: "old", createdAt: "2026-05-24T00:01:00Z"))
+        let unpinnedNew = try service.add(textItem(text: "new", createdAt: "2026-05-24T00:02:00Z"))
+
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [pinned.id.uuidString, unpinnedNew.id.uuidString])
+        #expect(try containsHistoryID(unpinnedOld.id.uuidString, database: database) == false)
+    }
+
+    @Test func addDoesNotPruneWhenAllItemsArePinned() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(1))
+
+        let first = try service.add(textItem(
+            text: "first",
+            createdAt: "2026-05-24T00:00:00Z",
+            pinnedAt: "2026-05-24T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        let second = try service.add(textItem(
+            text: "second",
+            createdAt: "2026-05-24T00:01:00Z",
+            pinnedAt: "2026-05-24T00:06:00Z",
+            pinnedOrder: 2
+        ))
+
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [first.id.uuidString, second.id.uuidString])
+    }
+
+    @Test func addPrunesNewUnpinnedItemWhenPinnedCountAlreadyMeetsLimit() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(1))
+
+        let pinned = try service.add(textItem(
+            text: "pinned",
+            createdAt: "2026-05-24T00:00:00Z",
+            pinnedAt: "2026-05-24T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        let unpinned = try service.add(textItem(text: "unpinned", createdAt: "2026-05-24T00:01:00Z"))
+
+        #expect(try historyCount(database) == 1)
+        #expect(try remainingIDs(database) == [pinned.id.uuidString])
+        #expect(try containsHistoryID(unpinned.id.uuidString, database: database) == false)
+    }
+
+    @Test func addDoesNotPruneWhenHistoryLimitIsUnlimited() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .unlimited)
+
+        let first = try service.add(textItem(text: "first", createdAt: "2026-05-24T00:00:00Z"))
+        let second = try service.add(textItem(text: "second", createdAt: "2026-05-24T00:01:00Z"))
+        let third = try service.add(textItem(text: "third", createdAt: "2026-05-24T00:02:00Z"))
+
+        #expect(try historyCount(database) == 3)
+        #expect(try remainingIDs(database) == [first.id.uuidString, second.id.uuidString, third.id.uuidString])
+    }
+
+    @Test func addWithZeroLimitPrunesAllUnpinnedItemsOnly() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .limited(0))
+
+        let pinned = try service.add(textItem(
+            text: "pinned",
+            createdAt: "2026-05-24T00:00:00Z",
+            pinnedAt: "2026-05-24T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        let firstUnpinned = try service.add(textItem(text: "first", createdAt: "2026-05-24T00:01:00Z"))
+        let secondUnpinned = try service.add(textItem(text: "second", createdAt: "2026-05-24T00:02:00Z"))
+
+        #expect(try historyCount(database) == 1)
+        #expect(try remainingIDs(database) == [pinned.id.uuidString])
+        #expect(try containsHistoryID(firstUnpinned.id.uuidString, database: database) == false)
+        #expect(try containsHistoryID(secondUnpinned.id.uuidString, database: database) == false)
+    }
+
+    @Test func addPrunesAfterDuplicateUpdateAndPublishesOneChange() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, historyLimit: .unlimited)
+        let old = try service.add(textItem(text: "old", createdAt: "2026-05-24T00:00:00Z"))
+        let duplicate = try service.add(textItem(text: "duplicate", createdAt: "2026-05-24T00:01:00Z"))
+        let newest = try service.add(textItem(text: "newest", createdAt: "2026-05-24T00:02:00Z"))
+        let pruningService = HistoryService(database: database, historyLimit: .limited(2))
+        var eventCount = 0
+        let cancellable = pruningService.changes.sink {
+            eventCount += 1
+        }
+
+        let updated = try pruningService.add(textItem(text: "duplicate", createdAt: "2026-05-24T00:03:00Z"))
+
+        #expect(updated.id == duplicate.id)
+        #expect(eventCount == 1)
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [newest.id.uuidString, duplicate.id.uuidString])
+        #expect(try containsHistoryID(old.id.uuidString, database: database) == false)
+        cancellable.cancel()
+    }
+
     @Test func addPropagatesDatabaseErrors() {
         let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
         let queryFailingDatabase = QueryCountingDatabase(error: queryError)
@@ -455,15 +613,36 @@ struct HistoryServiceTests {
     }
 
 
+    private func historyCount(_ database: any DatabaseConnection) throws -> Int {
+        try database.intValue(sql: "SELECT COUNT(*) FROM history") ?? 0
+    }
+
+    private func remainingIDs(_ database: any DatabaseConnection) throws -> [String] {
+        try database.rows(sql: """
+            SELECT id
+            FROM history
+            ORDER BY created_at ASC, id ASC
+            """)
+            .compactMap { $0.string("id") }
+    }
+
+    private func containsHistoryID(_ id: String, database: any DatabaseConnection) throws -> Bool {
+        try database.intValue(sql: "SELECT COUNT(*) FROM history WHERE id = '\(id)'") == 1
+    }
+
     private func textItem(
         text: String,
         rtf: Data? = nil,
-        createdAt: String
+        createdAt: String,
+        pinnedAt: String? = nil,
+        pinnedOrder: Int = 0
     ) -> HistoryItem {
         HistoryItem(
             id: UUID(),
             content: .text(text, rtf: rtf),
-            createdAt: date(createdAt)
+            createdAt: date(createdAt),
+            pinnedAt: pinnedAt.map(date),
+            pinnedOrder: pinnedOrder
         )
     }
 
