@@ -11,6 +11,7 @@ import Foundation
 
 final class HistoryService: @unchecked Sendable {
     private let database: any DatabaseConnection
+    private let historyLimit: Settings.HistoryLimit
     private let changesSubject = PassthroughSubject<Void, Never>()
     private static let historyColumns = """
         id,
@@ -33,15 +34,23 @@ final class HistoryService: @unchecked Sendable {
         changesSubject.eraseToAnyPublisher()
     }
 
-    init(database: any DatabaseConnection) {
+    init(
+        database: any DatabaseConnection,
+        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit
+    ) {
         self.database = database
+        self.historyLimit = historyLimit
     }
 
     convenience init(
         connector: any DatabaseConnecting = SQLiteDatabaseConnector(),
-        databaseURL: URL? = nil
+        databaseURL: URL? = nil,
+        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit
     ) throws {
-        try self.init(database: connector.makeConnection(databaseURL: databaseURL))
+        try self.init(
+            database: connector.makeConnection(databaseURL: databaseURL),
+            historyLimit: historyLimit
+        )
     }
 
     func recentItems(limit: Int = 5) throws -> [HistoryItem] {
@@ -64,12 +73,14 @@ final class HistoryService: @unchecked Sendable {
     func add(_ item: HistoryItem) throws -> HistoryItem {
         if let duplicate = try findDuplicate(for: item) {
             let updated = try touchExisting(duplicate, createdAt: item.createdAt)
+            try pruneHistoryIfNeeded()
             notifyChanged()
             return updated
         }
 
         try insert(item)
         let saved = try fetchByID(item.id)
+        try pruneHistoryIfNeeded()
         notifyChanged()
         return saved
     }
@@ -149,6 +160,35 @@ final class HistoryService: @unchecked Sendable {
             """)
 
         return try fetchByID(item.id)
+    }
+
+    private func pruneHistoryIfNeeded() throws {
+        let limit: Int
+
+        switch historyLimit {
+        case .unlimited:
+            return
+        case let .limited(value):
+            limit = max(value, 0)
+        }
+
+        let totalCount = try database.intValue(sql: "SELECT COUNT(*) FROM history") ?? 0
+        let deleteCount = totalCount - limit
+
+        guard deleteCount > 0 else {
+            return
+        }
+
+        try database.execute(sql: """
+            DELETE FROM history
+            WHERE id IN (
+                SELECT id
+                FROM history
+                WHERE pinned_at IS NULL
+                ORDER BY created_at ASC, id ASC
+                LIMIT \(deleteCount)
+            )
+            """)
     }
 
     private func fetchByID(_ id: UUID) throws -> HistoryItem {
