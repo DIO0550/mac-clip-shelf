@@ -29,6 +29,22 @@ final class HistoryService: @unchecked Sendable {
         pinned_at,
         pinned_order
         """
+    private static let qualifiedHistoryColumns = """
+        history.id AS id,
+        history.kind AS kind,
+        history.text_payload AS text_payload,
+        history.rtf_payload AS rtf_payload,
+        history.image_payload AS image_payload,
+        history.image_type AS image_type,
+        history.file_path AS file_path,
+        history.payload_hash AS payload_hash,
+        history.source_app AS source_app,
+        history.created_at AS created_at,
+        history.last_used_at AS last_used_at,
+        history.size_bytes AS size_bytes,
+        history.pinned_at AS pinned_at,
+        history.pinned_order AS pinned_order
+        """
 
     var changes: AnyPublisher<Void, Never> {
         changesSubject.eraseToAnyPublisher()
@@ -66,6 +82,46 @@ final class HistoryService: @unchecked Sendable {
                 CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
                 created_at DESC
             LIMIT \(limit)
+            """)
+            .map(mapRow)
+    }
+
+    func search(query: String, filter: HistoryFilter) throws -> [HistoryItem] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filterPredicate = Self.sqlPredicate(for: filter)
+        let whereClause = filterPredicate.map { "WHERE \($0)" } ?? ""
+
+        guard !trimmedQuery.isEmpty else {
+            return try database.rows(sql: """
+                SELECT
+                    \(Self.qualifiedHistoryColumns)
+                FROM history
+                \(whereClause)
+                \(Self.searchOrderByClause)
+                """)
+                .map(mapRow)
+        }
+
+        if filter == .image || filter == .file {
+            return []
+        }
+
+        guard let ftsQuery = Self.ftsQuery(from: trimmedQuery) else {
+            return []
+        }
+
+        var predicates = ["history_fts MATCH \(Self.sqlString(ftsQuery))"]
+        if let filterPredicate {
+            predicates.append(filterPredicate)
+        }
+
+        return try database.rows(sql: """
+            SELECT
+                \(Self.qualifiedHistoryColumns)
+            FROM history
+            JOIN history_fts ON history_fts.history_id = history.id
+            WHERE \(predicates.joined(separator: "\n    AND "))
+            \(Self.searchOrderByClause)
             """)
             .map(mapRow)
     }
@@ -273,6 +329,61 @@ final class HistoryService: @unchecked Sendable {
 
     private func date(from string: String) -> Date? {
         ISO8601DateFormatter().date(from: string)
+    }
+
+    private static var searchOrderByClause: String {
+        """
+        ORDER BY
+            CASE WHEN history.pinned_at IS NULL THEN 1 ELSE 0 END ASC,
+            COALESCE(CASE WHEN history.pinned_at IS NOT NULL THEN history.pinned_order END, 2147483647) ASC,
+            history.pinned_at DESC,
+            history.created_at DESC,
+            history.id ASC
+        """
+    }
+
+    private static func sqlPredicate(for filter: HistoryFilter) -> String? {
+        switch filter {
+        case .all:
+            return nil
+        case .text:
+            return "history.kind = 'text'"
+        case .image:
+            return "history.kind = 'image'"
+        case .file:
+            return "history.kind = 'file'"
+        case .pinned:
+            return "history.pinned_at IS NOT NULL"
+        case let .period(interval):
+            return "history.created_at >= \(sqlDate(interval.start)) AND history.created_at < \(sqlDate(interval.end))"
+        }
+    }
+
+    private static func ftsQuery(from query: String) -> String? {
+        let tokenCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        var tokens: [String] = []
+        var currentToken = ""
+
+        for scalar in query.unicodeScalars {
+            if tokenCharacters.contains(scalar) {
+                currentToken.unicodeScalars.append(scalar)
+            } else if !currentToken.isEmpty {
+                tokens.append(currentToken)
+                currentToken = ""
+            }
+        }
+
+        if !currentToken.isEmpty {
+            tokens.append(currentToken)
+        }
+
+        guard !tokens.isEmpty else {
+            return nil
+        }
+
+        return tokens
+            .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+            .joined(separator: " ")
     }
 
     private static func payloadValues(for item: HistoryItem) -> (
