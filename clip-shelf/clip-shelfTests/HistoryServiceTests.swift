@@ -170,6 +170,262 @@ struct HistoryServiceTests {
     }
 
 
+    @Test func searchReturnsFTSMatchesForTextRows() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "10101010-1010-1010-1010-101010101010",
+            text: "alpha project note",
+            createdAt: "2026-05-23T00:00:00Z"
+        )
+        try insertText(
+            database: database,
+            id: "20202020-2020-2020-2020-202020202020",
+            text: "beta project note",
+            createdAt: "2026-05-23T00:01:00Z"
+        )
+
+        let items = try HistoryService(database: database).search(query: "alpha", filter: .all)
+
+        #expect(items.map(\.id.uuidString) == [
+            "10101010-1010-1010-1010-101010101010"
+        ])
+        #expect(items.first?.content == .text("alpha project note", rtf: nil))
+    }
+
+    @Test func searchEmptyAndWhitespaceQueriesApplyFiltersWithoutFTS() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "30303030-3030-3030-3030-303030303030",
+            text: "text row",
+            createdAt: "2026-05-23T00:00:00Z"
+        )
+        try insertImage(
+            database: database,
+            id: "40404040-4040-4040-4040-404040404040",
+            createdAt: "2026-05-23T00:01:00Z"
+        )
+        try insertFile(
+            database: database,
+            id: "50505050-5050-5050-5050-505050505050",
+            createdAt: "2026-05-23T00:02:00Z"
+        )
+
+        let allItems = try HistoryService(database: database).search(query: "", filter: .all)
+        let fileItems = try HistoryService(database: database).search(query: "   \n\t", filter: .file)
+
+        #expect(allItems.map(\.id.uuidString) == [
+            "50505050-5050-5050-5050-505050505050",
+            "40404040-4040-4040-4040-404040404040",
+            "30303030-3030-3030-3030-303030303030"
+        ])
+        #expect(fileItems.map(\.id.uuidString) == [
+            "50505050-5050-5050-5050-505050505050"
+        ])
+    }
+
+    @Test func searchAppliesKindFiltersForEmptyQuery() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "60606060-6060-6060-6060-606060606060",
+            text: "text row",
+            createdAt: "2026-05-23T00:00:00Z"
+        )
+        try insertImage(
+            database: database,
+            id: "70707070-7070-7070-7070-707070707070",
+            createdAt: "2026-05-23T00:01:00Z"
+        )
+        try insertFile(
+            database: database,
+            id: "80808080-8080-8080-8080-808080808080",
+            createdAt: "2026-05-23T00:02:00Z"
+        )
+        let service = HistoryService(database: database)
+
+        #expect(try service.search(query: "", filter: .text).map(\.id.uuidString) == [
+            "60606060-6060-6060-6060-606060606060"
+        ])
+        #expect(try service.search(query: "", filter: .image).map(\.id.uuidString) == [
+            "70707070-7070-7070-7070-707070707070"
+        ])
+        #expect(try service.search(query: "", filter: .file).map(\.id.uuidString) == [
+            "80808080-8080-8080-8080-808080808080"
+        ])
+    }
+
+    @Test func searchNonEmptyQueryWithImageOrFileFilterReturnsEmptyWithoutQueryingDatabase() throws {
+        let database = QueryCountingDatabase(rows: [row(id: "90909090-9090-9090-9090-909090909090")])
+        let service = HistoryService(database: database)
+
+        #expect(try service.search(query: "hello", filter: .image).isEmpty)
+        #expect(try service.search(query: "hello", filter: .file).isEmpty)
+        #expect(database.rowsCallCount == 0)
+    }
+
+    @Test func searchAppliesPinnedAndPeriodFilters() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+            text: "before window",
+            createdAt: "2026-05-22T23:59:59Z"
+        )
+        try insertText(
+            database: database,
+            id: "B0B0B0B0-B0B0-B0B0-B0B0-B0B0B0B0B0B0",
+            text: "inside pinned",
+            createdAt: "2026-05-23T00:00:00Z",
+            pinnedAt: "2026-05-23T00:10:00Z",
+            pinnedOrder: 1
+        )
+        try insertText(
+            database: database,
+            id: "c0c0c0c0-c0c0-c0c0-c0c0-c0c0c0c0c0c0",
+            text: "end boundary",
+            createdAt: "2026-05-23T01:00:00Z"
+        )
+        let service = HistoryService(database: database)
+        let interval = DateInterval(
+            start: date("2026-05-23T00:00:00Z"),
+            end: date("2026-05-23T01:00:00Z")
+        )
+
+        #expect(try service.search(query: "", filter: .pinned).map(\.id.uuidString) == [
+            "B0B0B0B0-B0B0-B0B0-B0B0-B0B0B0B0B0B0"
+        ])
+        #expect(try service.search(query: "", filter: .period(interval)).map(\.id.uuidString) == [
+            "B0B0B0B0-B0B0-B0B0-B0B0-B0B0B0B0B0B0"
+        ])
+    }
+
+    @Test func searchSortsPinnedFirstWithStableTieBreakers() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "11111111-2222-3333-4444-555555555555",
+            text: "sort target pinned order two",
+            createdAt: "2026-05-23T00:04:00Z",
+            pinnedAt: "2026-05-23T00:20:00Z",
+            pinnedOrder: 2
+        )
+        try insertText(
+            database: database,
+            id: "11111111-2222-3333-4444-444444444444",
+            text: "sort target pinned newest",
+            createdAt: "2026-05-23T00:03:00Z",
+            pinnedAt: "2026-05-23T00:30:00Z",
+            pinnedOrder: 1
+        )
+        try insertText(
+            database: database,
+            id: "11111111-2222-3333-4444-333333333333",
+            text: "sort target pinned older",
+            createdAt: "2026-05-23T00:02:00Z",
+            pinnedAt: "2026-05-23T00:10:00Z",
+            pinnedOrder: 1
+        )
+        try insertText(
+            database: database,
+            id: "11111111-2222-3333-4444-222222222222",
+            text: "sort target unpinned high id",
+            createdAt: "2026-05-23T00:01:00Z"
+        )
+        try insertText(
+            database: database,
+            id: "11111111-2222-3333-4444-111111111111",
+            text: "sort target unpinned low id",
+            createdAt: "2026-05-23T00:01:00Z"
+        )
+
+        let items = try HistoryService(database: database).search(query: "sort target", filter: .all)
+
+        #expect(items.map(\.id.uuidString) == [
+            "11111111-2222-3333-4444-444444444444",
+            "11111111-2222-3333-4444-333333333333",
+            "11111111-2222-3333-4444-555555555555",
+            "11111111-2222-3333-4444-111111111111",
+            "11111111-2222-3333-4444-222222222222"
+        ])
+    }
+
+    @Test func searchFTSQueryBuilderHandlesSpecialCharactersSafely() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        try insertText(
+            database: database,
+            id: "12121212-1212-1212-1212-121212121212",
+            text: "foo near hello world a b 日本語",
+            createdAt: "2026-05-23T00:00:00Z"
+        )
+        let service = HistoryService(database: database)
+
+        #expect(try service.search(query: "foo*", filter: .all).map(\.id.uuidString) == [
+            "12121212-1212-1212-1212-121212121212"
+        ])
+        #expect(try service.search(query: "NEAR()", filter: .all).map(\.id.uuidString) == [
+            "12121212-1212-1212-1212-121212121212"
+        ])
+        #expect(try service.search(query: "a:b", filter: .all).map(\.id.uuidString) == [
+            "12121212-1212-1212-1212-121212121212"
+        ])
+        #expect(try service.search(query: "hello,world", filter: .all).map(\.id.uuidString) == [
+            "12121212-1212-1212-1212-121212121212"
+        ])
+        #expect(try service.search(query: "日本語", filter: .all).map(\.id.uuidString) == [
+            "12121212-1212-1212-1212-121212121212"
+        ])
+        #expect(try service.search(query: "!!!", filter: .all).isEmpty)
+    }
+
+    @Test func searchPropagatesDatabaseQueryErrors() {
+        let expectedError = DatabaseError.sqliteQueryFailed(code: 1, message: "no such table")
+        let database = QueryCountingDatabase(error: expectedError)
+        let service = HistoryService(database: database)
+
+        do {
+            _ = try service.search(query: "", filter: .all)
+            Issue.record("Expected database query error")
+        } catch let error as DatabaseError {
+            #expect(error == expectedError)
+        } catch {
+            Issue.record("Expected DatabaseError.sqliteQueryFailed")
+        }
+    }
+
+    @Test func searchThrowsForCorruptRows() {
+        let database = QueryCountingDatabase(rows: [row(id: "not-a-uuid")])
+        let service = HistoryService(database: database)
+
+        do {
+            _ = try service.search(query: "", filter: .all)
+            Issue.record("Expected corrupt history row to throw")
+        } catch HistoryError.corruption {
+        } catch {
+            Issue.record("Expected HistoryError.corruption")
+        }
+    }
+
+
     @Test func addSavesTextItemAndReadsItBack() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
