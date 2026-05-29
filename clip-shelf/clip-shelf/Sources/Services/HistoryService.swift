@@ -367,7 +367,10 @@ final class HistoryService: @unchecked Sendable {
         for scalar in query.unicodeScalars {
             if tokenCharacters.contains(scalar) {
                 currentToken.unicodeScalars.append(scalar)
-            } else if !currentToken.isEmpty {
+                continue
+            }
+
+            if !currentToken.isEmpty {
                 tokens.append(currentToken)
                 currentToken = ""
             }
