@@ -12,6 +12,7 @@ import Foundation
 final class HistoryService: @unchecked Sendable {
     private let database: any DatabaseConnection
     private let historyLimit: Settings.HistoryLimit
+    private let dateProvider: @Sendable () -> Date
     private let changesSubject = PassthroughSubject<Void, Never>()
     private static let historyColumns = """
         id,
@@ -52,20 +53,24 @@ final class HistoryService: @unchecked Sendable {
 
     init(
         database: any DatabaseConnection,
-        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit
+        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit,
+        dateProvider: @escaping @Sendable () -> Date = Date.init
     ) {
         self.database = database
         self.historyLimit = historyLimit
+        self.dateProvider = dateProvider
     }
 
     convenience init(
         connector: any DatabaseConnecting = SQLiteDatabaseConnector(),
         databaseURL: URL? = nil,
-        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit
+        historyLimit: Settings.HistoryLimit = Settings.default.historyLimit,
+        dateProvider: @escaping @Sendable () -> Date = Date.init
     ) throws {
         try self.init(
             database: connector.makeConnection(databaseURL: databaseURL),
-            historyLimit: historyLimit
+            historyLimit: historyLimit,
+            dateProvider: dateProvider
         )
     }
 
@@ -139,6 +144,40 @@ final class HistoryService: @unchecked Sendable {
         try pruneHistoryIfNeeded()
         notifyChanged()
         return saved
+    }
+
+    func delete(id: UUID) throws {
+        _ = try existingItem(id: id)
+
+        try database.execute(sql: """
+            DELETE FROM history
+            WHERE id = \(Self.sqlString(id.uuidString))
+            """)
+
+        notifyChanged()
+    }
+
+    func restore(_ item: HistoryItem) throws -> HistoryItem {
+        try insert(item)
+        let saved = try fetchByID(item.id)
+        try pruneHistoryIfNeeded()
+        notifyChanged()
+        return saved
+    }
+
+    func touch(id: UUID) throws -> HistoryItem {
+        _ = try existingItem(id: id)
+        let touchedAt = dateProvider()
+
+        try database.execute(sql: """
+            UPDATE history
+            SET last_used_at = \(Self.sqlDate(touchedAt))
+            WHERE id = \(Self.sqlString(id.uuidString))
+            """)
+
+        let updated = try existingItem(id: id)
+        notifyChanged()
+        return updated
     }
 
     func notifyChanged() {
@@ -256,6 +295,20 @@ final class HistoryService: @unchecked Sendable {
             LIMIT 1
             """) else {
             throw HistoryError.corruption
+        }
+
+        return item
+    }
+
+    private func existingItem(id: UUID) throws -> HistoryItem {
+        guard let item = try firstHistoryItem("""
+            SELECT
+                \(Self.historyColumns)
+            FROM history
+            WHERE id = \(Self.sqlString(id.uuidString))
+            LIMIT 1
+            """) else {
+            throw HistoryError.itemNotFound
         }
 
         return item
