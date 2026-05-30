@@ -828,12 +828,12 @@ struct HistoryServiceTests {
 
         let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
         let service = HistoryService(database: database)
-        let saved = try service.add(textItem(text: "removeable service token", createdAt: "2026-05-25T00:00:00Z"))
+        let saved = try service.add(textItem(text: "removable service token", createdAt: "2026-05-25T00:00:00Z"))
 
         try service.delete(id: saved.id)
 
-        #expect(try service.search(query: "removeable", filter: .all).isEmpty)
-        #expect(try historyFTSCount(matching: "removeable", database: database) == 0)
+        #expect(try service.search(query: "removable", filter: .all).isEmpty)
+        #expect(try historyFTSCount(matching: "removable", database: database) == 0)
     }
 
     @Test func restoreReinsertsDeletedItemWithSameIDAndReturnsNormalizedItem() throws {
