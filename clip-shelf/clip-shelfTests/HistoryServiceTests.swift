@@ -1311,7 +1311,7 @@ private final class ExecuteFailingExistingItemDatabase: DatabaseConnection, @unc
     }
 
     func intValue(sql: String) throws -> Int? {
-        nil
+        1
     }
 
     func stringValue(sql: String) throws -> String? {
