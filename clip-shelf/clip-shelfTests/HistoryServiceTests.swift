@@ -796,7 +796,7 @@ struct HistoryServiceTests {
 
     @Test func deletePropagatesDatabaseErrorsWithoutPublishing() {
         let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
-        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        let queryFailingDatabase = IntFailingDatabase(error: queryError)
         let queryFailingService = HistoryService(database: queryFailingDatabase)
         var queryEventCount = 0
         let queryCancellable = queryFailingService.changes.sink {
@@ -1214,6 +1214,30 @@ private final class QueryCountingDatabase: DatabaseConnection, @unchecked Sendab
         }
 
         return rowResult
+    }
+}
+
+
+private final class IntFailingDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/int-failing.sqlite")
+    private let error: DatabaseError
+
+    init(error: DatabaseError) {
+        self.error = error
+    }
+
+    func execute(sql: String) throws {}
+
+    func intValue(sql: String) throws -> Int? {
+        throw error
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        []
     }
 }
 

@@ -147,7 +147,7 @@ final class HistoryService: @unchecked Sendable {
     }
 
     func delete(id: UUID) throws {
-        _ = try existingItem(id: id)
+        try requireExistingItem(id: id)
 
         try database.execute(sql: """
             DELETE FROM history
@@ -298,6 +298,19 @@ final class HistoryService: @unchecked Sendable {
         }
 
         return item
+    }
+
+    private func requireExistingItem(id: UUID) throws {
+        let exists = try database.intValue(sql: """
+            SELECT 1
+            FROM history
+            WHERE id = \(Self.sqlString(id.uuidString))
+            LIMIT 1
+            """)
+
+        guard exists != nil else {
+            throw HistoryError.itemNotFound
+        }
     }
 
     private func existingItem(id: UUID) throws -> HistoryItem {
