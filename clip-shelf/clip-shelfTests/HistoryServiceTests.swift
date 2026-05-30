@@ -754,6 +754,223 @@ struct HistoryServiceTests {
         expectThrows { _ = try HistoryService(database: executeFailingDatabase).add(textItem(text: "hello", createdAt: "2026-05-24T00:00:00Z")) }
     }
 
+
+    @Test func deleteRemovesExistingItemAndPublishesOneChange() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let saved = try service.add(textItem(text: "delete me", createdAt: "2026-05-25T00:00:00Z"))
+        _ = try service.add(textItem(text: "keep me", createdAt: "2026-05-25T00:01:00Z"))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        try service.delete(id: saved.id)
+        let items = try service.recentItems(limit: 10)
+
+        #expect(eventCount == 1)
+        #expect(try historyCount(database) == 1)
+        #expect(items.map(\.id).contains(saved.id) == false)
+        cancellable.cancel()
+    }
+
+    @Test func deleteMissingTargetThrowsItemNotFoundAndDoesNotPublish() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectItemNotFound { try service.delete(id: UUID()) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func deletePropagatesDatabaseErrorsWithoutPublishing() {
+        let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
+        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        let queryFailingService = HistoryService(database: queryFailingDatabase)
+        var queryEventCount = 0
+        let queryCancellable = queryFailingService.changes.sink {
+            queryEventCount += 1
+        }
+
+        expectThrows { try queryFailingService.delete(id: UUID()) }
+
+        #expect(queryEventCount == 0)
+        queryCancellable.cancel()
+
+        let executeError = DatabaseError.sqliteExecutionFailed(code: 1, message: "execute failed")
+        let executeFailingDatabase = ExecuteFailingExistingItemDatabase(error: executeError, rows: [row(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")])
+        let executeFailingService = HistoryService(database: executeFailingDatabase)
+        var eventCount = 0
+        let cancellable = executeFailingService.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { try executeFailingService.delete(id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func deleteRemovesTextItemFromFTSIndex() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let saved = try service.add(textItem(text: "removeable service token", createdAt: "2026-05-25T00:00:00Z"))
+
+        try service.delete(id: saved.id)
+
+        #expect(try service.search(query: "removeable", filter: .all).isEmpty)
+        #expect(try historyFTSCount(matching: "removeable", database: database) == 0)
+    }
+
+    @Test func restoreReinsertsDeletedItemWithSameIDAndReturnsNormalizedItem() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let original = try service.add(textItem(text: "restore me", rtf: Data([0x01]), createdAt: "2026-05-25T00:00:00Z"))
+        try service.delete(id: original.id)
+        var restoredInput = original
+        restoredInput.representations = [HistoryItem.PasteboardRepresentation(typeIdentifier: "public.text", data: Data([0x02]))]
+        restoredInput.sizeBytes = 999
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        let restored = try service.restore(restoredInput)
+
+        #expect(restored.id == original.id)
+        #expect(restored.content == original.content)
+        #expect(restored.representations.isEmpty)
+        #expect(restored.sizeBytes == "restore me".utf8.count + 1)
+        #expect(eventCount == 1)
+        #expect(try service.search(query: "restore", filter: .all).map(\.id) == [original.id])
+        #expect(try historyFTSCount(matching: "restore", database: database) == 1)
+        cancellable.cancel()
+    }
+
+    @Test func restoreDuplicateIDPropagatesConstraintErrorAndDoesNotPublish() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let existing = try service.add(textItem(text: "existing", createdAt: "2026-05-25T00:00:00Z"))
+        var duplicate = textItem(text: "duplicate", createdAt: "2026-05-25T00:01:00Z")
+        duplicate.id = existing.id
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { _ = try service.restore(duplicate) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func restorePrunesOldestUnpinnedItemWhenLimitIsExceeded() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let seedingService = HistoryService(database: database, historyLimit: .unlimited)
+        let old = try seedingService.add(textItem(text: "old", createdAt: "2026-05-25T00:00:00Z"))
+        let middle = try seedingService.add(textItem(text: "middle", createdAt: "2026-05-25T00:01:00Z"))
+        let restoringService = HistoryService(database: database, historyLimit: .limited(2))
+        let newest = textItem(text: "newest", createdAt: "2026-05-25T00:02:00Z")
+
+        let restored = try restoringService.restore(newest)
+
+        #expect(try historyCount(database) == 2)
+        #expect(try remainingIDs(database) == [middle.id.uuidString, restored.id.uuidString])
+        #expect(try containsHistoryID(old.id.uuidString, database: database) == false)
+    }
+
+    @Test func touchUpdatesLastUsedAtOnlyReturnsItemAndPublishesOneChange() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let touchedAt = date("2026-05-25T00:10:00Z")
+        let service = HistoryService(database: database, dateProvider: { touchedAt })
+        let saved = try service.add(textItem(text: "touch service token", createdAt: "2026-05-25T00:00:00Z"))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        let touched = try service.touch(id: saved.id)
+
+        #expect(touched.id == saved.id)
+        #expect(touched.createdAt == saved.createdAt)
+        #expect(touched.lastUsedAt == touchedAt)
+        #expect(eventCount == 1)
+        #expect(try service.search(query: "touch", filter: .all).map(\.id) == [saved.id])
+        #expect(try historyFTSCount(matching: "touch", database: database) == 1)
+        cancellable.cancel()
+    }
+
+    @Test func touchMissingTargetThrowsItemNotFoundAndDoesNotPublish() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectItemNotFound { _ = try service.touch(id: UUID()) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func touchPropagatesDatabaseErrorsWithoutPublishing() {
+        let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
+        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        let queryFailingService = HistoryService(database: queryFailingDatabase)
+        var queryEventCount = 0
+        let queryCancellable = queryFailingService.changes.sink {
+            queryEventCount += 1
+        }
+
+        expectThrows { _ = try queryFailingService.touch(id: UUID()) }
+
+        #expect(queryEventCount == 0)
+        queryCancellable.cancel()
+
+        let executeError = DatabaseError.sqliteExecutionFailed(code: 1, message: "execute failed")
+        let executeFailingDatabase = ExecuteFailingExistingItemDatabase(error: executeError, rows: [row(id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")])
+        let executeFailingService = HistoryService(database: executeFailingDatabase)
+        var eventCount = 0
+        let cancellable = executeFailingService.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { _ = try executeFailingService.touch(id: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
     private func makeDatabase(temporaryDirectory: URL) throws -> any DatabaseConnection {
         try SQLiteDatabaseConnector().makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
@@ -886,6 +1103,11 @@ struct HistoryServiceTests {
         try database.intValue(sql: "SELECT COUNT(*) FROM history WHERE id = '\(id)'") == 1
     }
 
+
+    private func historyFTSCount(matching query: String, database: any DatabaseConnection) throws -> Int {
+        try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH '\(query)'") ?? 0
+    }
+
     private func textItem(
         text: String,
         rtf: Data? = nil,
@@ -931,6 +1153,17 @@ struct HistoryServiceTests {
             try operation()
             Issue.record("Expected operation to throw")
         } catch {
+        }
+    }
+
+
+    private func expectItemNotFound(_ operation: () throws -> Void) {
+        do {
+            try operation()
+            Issue.record("Expected itemNotFound")
+        } catch HistoryError.itemNotFound {
+        } catch {
+            Issue.record("Expected HistoryError.itemNotFound")
         }
     }
 
@@ -981,6 +1214,34 @@ private final class QueryCountingDatabase: DatabaseConnection, @unchecked Sendab
         }
 
         return rowResult
+    }
+}
+
+
+private final class ExecuteFailingExistingItemDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/execute-failing-existing-item.sqlite")
+    private let error: DatabaseError
+    private let rowResult: [DatabaseRow]
+
+    init(error: DatabaseError, rows: [DatabaseRow]) {
+        self.error = error
+        rowResult = rows
+    }
+
+    func execute(sql: String) throws {
+        throw error
+    }
+
+    func intValue(sql: String) throws -> Int? {
+        nil
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        rowResult
     }
 }
 
