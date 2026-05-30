@@ -902,6 +902,27 @@ struct HistoryServiceTests {
         #expect(try containsHistoryID(old.id.uuidString, database: database) == false)
     }
 
+    @Test func restoreRollsBackAndDoesNotPublishWhenPruningFails() {
+        let item = textItem(text: "rollback", createdAt: "2026-05-25T00:03:00Z")
+        let expectedError = DatabaseError.sqliteExecutionFailed(code: 1, message: "delete failed")
+        let database = PruneFailingTransactionDatabase(
+            row: row(id: item.id.uuidString),
+            error: expectedError
+        )
+        let service = HistoryService(database: database, historyLimit: .limited(1))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { _ = try service.restore(item) }
+
+        #expect(database.executedSQL.contains("ROLLBACK"))
+        #expect(database.executedSQL.contains("COMMIT") == false)
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
     @Test func touchUpdatesLastUsedAtOnlyReturnsItemAndPublishesOneChange() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -1214,6 +1235,39 @@ private final class QueryCountingDatabase: DatabaseConnection, @unchecked Sendab
         }
 
         return rowResult
+    }
+}
+
+
+private final class PruneFailingTransactionDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/prune-failing-transaction.sqlite")
+    private let rowResult: DatabaseRow
+    private let error: DatabaseError
+    private(set) var executedSQL: [String] = []
+
+    init(row: DatabaseRow, error: DatabaseError) {
+        rowResult = row
+        self.error = error
+    }
+
+    func execute(sql: String) throws {
+        executedSQL.append(sql)
+
+        if sql.contains("DELETE FROM history") {
+            throw error
+        }
+    }
+
+    func intValue(sql: String) throws -> Int? {
+        2
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        [rowResult]
     }
 }
 

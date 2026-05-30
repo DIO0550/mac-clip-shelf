@@ -158,11 +158,18 @@ final class HistoryService: @unchecked Sendable {
     }
 
     func restore(_ item: HistoryItem) throws -> HistoryItem {
-        try insert(item)
-        let saved = try fetchByID(item.id)
-        try pruneHistoryIfNeeded()
-        notifyChanged()
-        return saved
+        do {
+            try database.execute(sql: "BEGIN IMMEDIATE")
+            try insert(item)
+            let saved = try fetchByID(item.id)
+            try pruneHistoryIfNeeded()
+            try database.execute(sql: "COMMIT")
+            notifyChanged()
+            return saved
+        } catch {
+            try? database.execute(sql: "ROLLBACK")
+            throw error
+        }
     }
 
     func touch(id: UUID) throws -> HistoryItem {
