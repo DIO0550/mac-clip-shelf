@@ -1126,7 +1126,7 @@ struct HistoryServiceTests {
 
 
     private func historyFTSCount(matching query: String, database: any DatabaseConnection) throws -> Int {
-        try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH '\(query)'") ?? 0
+        try database.intValue(sql: "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH \(textLiteral(query))") ?? 0
     }
 
     private func textItem(
