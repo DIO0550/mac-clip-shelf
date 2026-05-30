@@ -166,7 +166,7 @@ final class HistoryService: @unchecked Sendable {
     }
 
     func touch(id: UUID) throws -> HistoryItem {
-        _ = try existingItem(id: id)
+        try requireExistingItem(id: id)
         let touchedAt = dateProvider()
 
         try database.execute(sql: """

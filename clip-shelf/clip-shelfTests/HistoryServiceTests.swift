@@ -945,7 +945,7 @@ struct HistoryServiceTests {
 
     @Test func touchPropagatesDatabaseErrorsWithoutPublishing() {
         let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
-        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        let queryFailingDatabase = IntFailingDatabase(error: queryError)
         let queryFailingService = HistoryService(database: queryFailingDatabase)
         var queryEventCount = 0
         let queryCancellable = queryFailingService.changes.sink {
