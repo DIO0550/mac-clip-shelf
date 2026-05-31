@@ -992,6 +992,225 @@ struct HistoryServiceTests {
         cancellable.cancel()
     }
 
+    @Test func togglePinPinsUnpinnedItemWithDateProviderOrderAndOneChange() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let pinnedAt = date("2026-05-25T00:20:00Z")
+        let service = HistoryService(database: database, dateProvider: { pinnedAt })
+        let saved = try service.add(textItem(text: "pin service token", createdAt: "2026-05-25T00:00:00Z"))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        let pinned = try service.togglePin(id: saved.id)
+
+        #expect(pinned.id == saved.id)
+        #expect(pinned.isPinned)
+        #expect(pinned.pinnedAt == pinnedAt)
+        #expect(pinned.pinnedOrder == 1)
+        #expect(eventCount == 1)
+        #expect(try service.search(query: "pin", filter: .all).map(\.id) == [saved.id])
+        #expect(try historyFTSCount(matching: "pin", database: database) == 1)
+        cancellable.cancel()
+    }
+
+    @Test func togglePinPinsAfterExistingMaximumOrder() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database, dateProvider: { date("2026-05-25T00:30:00Z") })
+        _ = try service.add(textItem(
+            text: "first pinned",
+            createdAt: "2026-05-25T00:00:00Z",
+            pinnedAt: "2026-05-25T00:10:00Z",
+            pinnedOrder: 1
+        ))
+        _ = try service.add(textItem(
+            text: "second pinned",
+            createdAt: "2026-05-25T00:01:00Z",
+            pinnedAt: "2026-05-25T00:11:00Z",
+            pinnedOrder: 2
+        ))
+        let unpinned = try service.add(textItem(text: "third unpinned", createdAt: "2026-05-25T00:02:00Z"))
+
+        let pinned = try service.togglePin(id: unpinned.id)
+
+        #expect(pinned.pinnedOrder == 3)
+    }
+
+    @Test func togglePinUnpinsPinnedItem() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let saved = try service.add(textItem(
+            text: "unpin me",
+            createdAt: "2026-05-25T00:00:00Z",
+            pinnedAt: "2026-05-25T00:05:00Z",
+            pinnedOrder: 1
+        ))
+
+        let unpinned = try service.togglePin(id: saved.id)
+
+        #expect(unpinned.id == saved.id)
+        #expect(unpinned.isPinned == false)
+        #expect(unpinned.pinnedAt == nil)
+        #expect(unpinned.pinnedOrder == 0)
+    }
+
+    @Test func togglePinMissingTargetThrowsItemNotFoundAndDoesNotPublish() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectItemNotFound { _ = try service.togglePin(id: UUID()) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func togglePinPropagatesDatabaseErrorsWithoutPublishing() {
+        let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
+        let queryFailingDatabase = QueryCountingDatabase(error: queryError)
+        let queryFailingService = HistoryService(database: queryFailingDatabase)
+        var queryEventCount = 0
+        let queryCancellable = queryFailingService.changes.sink {
+            queryEventCount += 1
+        }
+
+        expectThrows { _ = try queryFailingService.togglePin(id: UUID()) }
+
+        #expect(queryEventCount == 0)
+        queryCancellable.cancel()
+
+        let executeError = DatabaseError.sqliteExecutionFailed(code: 1, message: "execute failed")
+        let executeFailingDatabase = ExecuteFailingExistingItemDatabase(error: executeError, rows: [row(id: "cccccccc-cccc-cccc-cccc-cccccccccccc")])
+        let executeFailingService = HistoryService(database: executeFailingDatabase)
+        var eventCount = 0
+        let cancellable = executeFailingService.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { _ = try executeFailingService.togglePin(id: UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func clearAllDeletesEveryItemRemovesFTSAndPublishesOneChange() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        _ = try service.add(textItem(text: "clear all token", createdAt: "2026-05-25T00:00:00Z"))
+        _ = try service.add(textItem(
+            text: "clear pinned token",
+            createdAt: "2026-05-25T00:01:00Z",
+            pinnedAt: "2026-05-25T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        try service.clear(keepPinned: false)
+
+        #expect(eventCount == 1)
+        #expect(try historyCount(database) == 0)
+        #expect(try service.search(query: "clear", filter: .all).isEmpty)
+        #expect(try historyFTSCount(matching: "clear", database: database) == 0)
+        cancellable.cancel()
+    }
+
+    @Test func clearKeepPinnedDeletesOnlyUnpinnedAndLeavesPinnedReadable() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let pinned = try service.add(textItem(
+            text: "kept pinned token",
+            createdAt: "2026-05-25T00:00:00Z",
+            pinnedAt: "2026-05-25T00:05:00Z",
+            pinnedOrder: 1
+        ))
+        let unpinned = try service.add(textItem(text: "removed unpinned token", createdAt: "2026-05-25T00:01:00Z"))
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        try service.clear(keepPinned: true)
+
+        #expect(eventCount == 1)
+        #expect(try historyCount(database) == 1)
+        #expect(try containsHistoryID(pinned.id.uuidString, database: database))
+        #expect(try containsHistoryID(unpinned.id.uuidString, database: database) == false)
+        #expect(try service.search(query: "", filter: .pinned).map(\.id) == [pinned.id])
+        #expect(try service.recentItems(limit: 10).map(\.id) == [pinned.id])
+        cancellable.cancel()
+    }
+
+    @Test func clearWithNoTargetsDoesNotDeleteOrPublish() {
+        let database = IntCountingDatabase(value: 0)
+        let service = HistoryService(database: database)
+        var eventCount = 0
+        let cancellable = service.changes.sink {
+            eventCount += 1
+        }
+
+        expectNoThrow { try service.clear(keepPinned: true) }
+
+        #expect(database.intValueCallCount == 1)
+        #expect(database.executeCallCount == 0)
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
+    @Test func clearPropagatesDatabaseErrorsWithoutPublishing() {
+        let queryError = DatabaseError.sqliteQueryFailed(code: 1, message: "query failed")
+        let queryFailingDatabase = IntFailingDatabase(error: queryError)
+        let queryFailingService = HistoryService(database: queryFailingDatabase)
+        var queryEventCount = 0
+        let queryCancellable = queryFailingService.changes.sink {
+            queryEventCount += 1
+        }
+
+        expectThrows { try queryFailingService.clear(keepPinned: false) }
+
+        #expect(queryEventCount == 0)
+        queryCancellable.cancel()
+
+        let executeError = DatabaseError.sqliteExecutionFailed(code: 1, message: "execute failed")
+        let executeFailingDatabase = PruneFailingTransactionDatabase(
+            row: row(id: "dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            error: executeError
+        )
+        let executeFailingService = HistoryService(database: executeFailingDatabase)
+        var eventCount = 0
+        let cancellable = executeFailingService.changes.sink {
+            eventCount += 1
+        }
+
+        expectThrows { try executeFailingService.clear(keepPinned: false) }
+
+        #expect(eventCount == 0)
+        cancellable.cancel()
+    }
+
     private func makeDatabase(temporaryDirectory: URL) throws -> any DatabaseConnection {
         try SQLiteDatabaseConnector().makeConnection(
             databaseURL: temporaryDirectory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
@@ -1177,6 +1396,14 @@ struct HistoryServiceTests {
         }
     }
 
+    private func expectNoThrow(_ operation: () throws -> Void) {
+        do {
+            try operation()
+        } catch {
+            Issue.record("Expected operation not to throw")
+        }
+    }
+
 
     private func expectItemNotFound(_ operation: () throws -> Void) {
         do {
@@ -1205,6 +1432,35 @@ struct HistoryServiceTests {
         try? FileManager.default.removeItem(at: directory)
     }
 }
+
+private final class IntCountingDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/int-counting.sqlite")
+    private let value: Int?
+    private(set) var executeCallCount = 0
+    private(set) var intValueCallCount = 0
+
+    init(value: Int?) {
+        self.value = value
+    }
+
+    func execute(sql: String) throws {
+        executeCallCount += 1
+    }
+
+    func intValue(sql: String) throws -> Int? {
+        intValueCallCount += 1
+        return value
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        []
+    }
+}
+
 
 private final class QueryCountingDatabase: DatabaseConnection, @unchecked Sendable {
     let databaseURL = URL(fileURLWithPath: "/tmp/query-counting.sqlite")
