@@ -157,6 +157,26 @@ final class HistoryService: @unchecked Sendable {
         notifyChanged()
     }
 
+    func clear(keepPinned: Bool) throws {
+        let predicate = keepPinned ? "WHERE pinned_at IS NULL" : ""
+        let targetCount = try database.intValue(sql: """
+            SELECT COUNT(*)
+            FROM history
+            \(predicate)
+            """) ?? 0
+
+        guard targetCount > 0 else {
+            return
+        }
+
+        try database.execute(sql: """
+            DELETE FROM history
+            \(predicate)
+            """)
+
+        notifyChanged()
+    }
+
     func restore(_ item: HistoryItem) throws -> HistoryItem {
         do {
             try database.execute(sql: "BEGIN IMMEDIATE")
@@ -181,6 +201,37 @@ final class HistoryService: @unchecked Sendable {
             SET last_used_at = \(Self.sqlDate(touchedAt))
             WHERE id = \(Self.sqlString(id.uuidString))
             """)
+
+        let updated = try existingItem(id: id)
+        notifyChanged()
+        return updated
+    }
+
+    func togglePin(id: UUID) throws -> HistoryItem {
+        let item = try existingItem(id: id)
+
+        if item.isPinned {
+            try database.execute(sql: """
+                UPDATE history
+                SET pinned_at = NULL,
+                    pinned_order = 0
+                WHERE id = \(Self.sqlString(id.uuidString))
+                """)
+        } else {
+            let pinnedAt = dateProvider()
+            let nextOrder = try database.intValue(sql: """
+                SELECT COALESCE(MAX(pinned_order), 0) + 1
+                FROM history
+                WHERE pinned_at IS NOT NULL
+                """) ?? 1
+
+            try database.execute(sql: """
+                UPDATE history
+                SET pinned_at = \(Self.sqlDate(pinnedAt)),
+                    pinned_order = \(nextOrder)
+                WHERE id = \(Self.sqlString(id.uuidString))
+                """)
+        }
 
         let updated = try existingItem(id: id)
         notifyChanged()
