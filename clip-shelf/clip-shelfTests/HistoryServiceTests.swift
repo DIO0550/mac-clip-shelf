@@ -519,6 +519,46 @@ struct HistoryServiceTests {
         cancellable.cancel()
     }
 
+    @Test func addDeduplicatedTextPreservesExistingMetadataExceptCreatedAt() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let pinnedAt = date("2026-05-24T00:02:00Z")
+        let lastUsedAt = date("2026-05-24T00:03:00Z")
+        let first = try service.add(textItem(
+            text: "same metadata",
+            rtf: Data([0x01]),
+            createdAt: "2026-05-24T00:00:00Z",
+            sourceApp: "com.example.SourceApp",
+            lastUsedAt: lastUsedAt,
+            pinnedAt: "2026-05-24T00:02:00Z",
+            pinnedOrder: 7
+        ))
+
+        let duplicate = try service.add(textItem(
+            text: "same metadata",
+            rtf: Data([0x02]),
+            createdAt: "2026-05-24T00:10:00Z",
+            sourceApp: "com.example.OtherApp",
+            lastUsedAt: date("2026-05-24T00:11:00Z"),
+            pinnedAt: "2026-05-24T00:12:00Z",
+            pinnedOrder: 1
+        ))
+        let recentItems = try service.recentItems(limit: 5)
+
+        #expect(duplicate.id == first.id)
+        #expect(duplicate.content == first.content)
+        #expect(duplicate.createdAt == date("2026-05-24T00:10:00Z"))
+        #expect(duplicate.sourceApp == "com.example.SourceApp")
+        #expect(duplicate.lastUsedAt == lastUsedAt)
+        #expect(duplicate.pinnedAt == pinnedAt)
+        #expect(duplicate.pinnedOrder == 7)
+        #expect(recentItems == [duplicate])
+        #expect(try historyCount(database) == 1)
+    }
+
     @Test func addSavesAndDeduplicatesFilesByLiteralPath() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -565,6 +605,32 @@ struct HistoryServiceTests {
         #expect(different.id != first.id)
         #expect(empty.content == .image(Data(), typeIdentifier: "public.png"))
         #expect(emptyDuplicate.id == empty.id)
+    }
+
+    @Test func addDeduplicatesImagesByBytesEvenWhenTypeIdentifierDiffers() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let database = try makeDatabase(temporaryDirectory: temporaryDirectory)
+        let service = HistoryService(database: database)
+        let first = try service.add(imageItem(
+            data: Data([0x89, 0x50]),
+            typeIdentifier: "public.png",
+            createdAt: "2026-05-24T00:00:00Z"
+        ))
+
+        let duplicate = try service.add(imageItem(
+            data: Data([0x89, 0x50]),
+            typeIdentifier: "public.jpeg",
+            createdAt: "2026-05-24T00:10:00Z"
+        ))
+        let recentItems = try service.recentItems(limit: 5)
+
+        #expect(duplicate.id == first.id)
+        #expect(duplicate.content == first.content)
+        #expect(duplicate.createdAt == date("2026-05-24T00:10:00Z"))
+        #expect(recentItems == [duplicate])
+        #expect(try historyCount(database) == 1)
     }
 
     @Test func addThrowsForInvalidContentAndDoesNotPublishChanges() throws {
@@ -1352,13 +1418,17 @@ struct HistoryServiceTests {
         text: String,
         rtf: Data? = nil,
         createdAt: String,
+        sourceApp: String? = nil,
+        lastUsedAt: Date? = nil,
         pinnedAt: String? = nil,
         pinnedOrder: Int = 0
     ) -> HistoryItem {
         HistoryItem(
             id: UUID(),
             content: .text(text, rtf: rtf),
+            sourceApp: sourceApp,
             createdAt: date(createdAt),
+            lastUsedAt: lastUsedAt,
             pinnedAt: pinnedAt.map(date),
             pinnedOrder: pinnedOrder
         )
