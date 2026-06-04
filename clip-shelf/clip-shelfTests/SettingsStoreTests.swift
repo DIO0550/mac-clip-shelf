@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/06/01.
 //
 
+import Combine
 import Foundation
 import Testing
 @testable import clip_shelf
@@ -19,6 +20,39 @@ struct SettingsStoreTests {
 
         #expect(value == nil)
         #expect(database.stringValueCallCount == 1)
+    }
+
+    @Test func getResolvedReturnsDefaultForMissingKey() throws {
+        let database = SettingsStoreStubDatabase(stringResult: nil)
+        let store = SettingsStore(database: database)
+
+        let value = try store.getResolved(Bool.self, forKey: .launchAtLogin, default: true)
+
+        #expect(value == true)
+        #expect(database.stringValueCallCount == 1)
+    }
+
+    @Test func resolvedSettingsUsesDomainDefaultsWhenValuesAreMissing() throws {
+        let database = SettingsStoreStubDatabase(stringResult: nil)
+        let store = SettingsStore(database: database)
+
+        let settings = try store.resolvedSettings()
+
+        #expect(settings == Settings.default)
+        #expect(settings.historyLimit == .limited(500))
+        #expect(database.stringValueCallCount == SettingKey.allCases.count)
+    }
+
+    @Test func resolvedSettingsUsesDomainDefaultsForInitialSeedDatabase() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let store = try makeStore(temporaryDirectory: temporaryDirectory)
+
+        let settings = try store.resolvedSettings()
+
+        #expect(settings == Settings.default)
+        #expect(settings.historyLimit == .limited(500))
     }
 
     @Test func setThenGetRestoresCodableValue() throws {
@@ -46,6 +80,83 @@ struct SettingsStoreTests {
         #expect(try store.get(Int.self, forKey: .historyLimit) == 250)
     }
 
+    @Test func getResolvedPrefersStoredJSONValueOverDefault() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let store = try makeStore(temporaryDirectory: temporaryDirectory)
+
+        try store.set(Settings.HistoryLimit.limited(1_000), forKey: .historyLimit)
+
+        let value = try store.getResolved(
+            Settings.HistoryLimit.self,
+            forKey: .historyLimit,
+            default: .limited(50)
+        )
+
+        #expect(value == .limited(1_000))
+    }
+
+    @Test func getResolvedDecodesLegacyHistoryLimitSeedRawValue() throws {
+        let database = SettingsStoreStubDatabase(stringResult: "500")
+        let store = SettingsStore(database: database)
+
+        let value = try store.getResolved(
+            Settings.HistoryLimit.self,
+            forKey: .historyLimit,
+            default: .unlimited
+        )
+
+        #expect(value == .limited(500))
+    }
+
+    @Test func getResolvedDecodesLegacyUnlimitedHistoryLimitSeedRawValue() throws {
+        let database = SettingsStoreStubDatabase(stringResult: "unlimited")
+        let store = SettingsStore(database: database)
+
+        let value = try store.getResolved(
+            Settings.HistoryLimit.self,
+            forKey: .historyLimit,
+            default: .limited(50)
+        )
+
+        #expect(value == .unlimited)
+    }
+
+    @Test func getResolvedDecodesLegacyAppearanceSeedRawValues() throws {
+        for appearance in Settings.Appearance.allCases {
+            let database = SettingsStoreStubDatabase(stringResult: appearance.rawValue)
+            let store = SettingsStore(database: database)
+
+            let value = try store.getResolved(
+                Settings.Appearance.self,
+                forKey: .appearance,
+                default: .system
+            )
+
+            #expect(value == appearance)
+        }
+    }
+
+    @Test func getResolvedDecodesLegacyBoolSeedRawValues() throws {
+        let trueDatabase = SettingsStoreStubDatabase(stringResult: "true")
+        let falseDatabase = SettingsStoreStubDatabase(stringResult: "false")
+
+        #expect(try SettingsStore(database: trueDatabase)
+            .getResolved(Bool.self, forKey: .launchAtLogin, default: false) == true)
+        #expect(try SettingsStore(database: falseDatabase)
+            .getResolved(Bool.self, forKey: .includeImages, default: true) == false)
+    }
+
+    @Test func getResolvedFallsBackToDefaultForInvalidValue() throws {
+        let database = SettingsStoreStubDatabase(stringResult: "not-json")
+        let store = SettingsStore(database: database)
+
+        let value = try store.getResolved(Bool.self, forKey: .launchAtLogin, default: true)
+
+        #expect(value == true)
+    }
+
     @Test func getThrowsDecodingFailedForCorruptedJSON() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
@@ -66,6 +177,105 @@ struct SettingsStoreTests {
         } catch {
             Issue.record("Expected SettingsStoreError.decodingFailed")
         }
+    }
+
+    @Test func getResolvedPropagatesDatabaseQueryError() {
+        let expectedError = DatabaseError.sqliteQueryFailed(code: 1, message: "no such table")
+        let database = SettingsStoreStubDatabase(stringError: expectedError)
+        let store = SettingsStore(database: database)
+
+        do {
+            _ = try store.getResolved(Bool.self, forKey: .launchAtLogin, default: true)
+            Issue.record("Expected database query error")
+        } catch let error as DatabaseError {
+            #expect(error == expectedError)
+        } catch {
+            Issue.record("Expected DatabaseError.sqliteQueryFailed")
+        }
+    }
+
+    @Test func changesCanBeSubscribedAsVoidPublisher() {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        let publisher: AnyPublisher<Void, Never> = store.changes
+
+        let cancellable = publisher.sink {}
+
+        cancellable.cancel()
+    }
+
+    @Test func setPublishesChangesAfterSuccessfulUpsert() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.changes.sink {
+            eventCount += 1
+        }
+
+        try store.set(true, forKey: .launchAtLogin)
+
+        #expect(eventCount == 1)
+        #expect(database.executeCallCount == 1)
+        cancellable.cancel()
+    }
+
+    @Test func setPublishesChangesAfterSuccessfulEquivalentUpserts() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.changes.sink {
+            eventCount += 1
+        }
+
+        try store.set(true, forKey: .launchAtLogin)
+        try store.set(true, forKey: .launchAtLogin)
+
+        #expect(eventCount == 2)
+        #expect(database.executeCallCount == 2)
+        cancellable.cancel()
+    }
+
+    @Test func setDoesNotPublishChangesWhenDatabaseUpsertFails() {
+        let expectedError = DatabaseError.sqliteExecutionFailed(code: 1, message: "readonly")
+        let database = SettingsStoreStubDatabase(executeError: expectedError)
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.changes.sink {
+            eventCount += 1
+        }
+
+        do {
+            try store.set(true, forKey: .launchAtLogin)
+            Issue.record("Expected database execution error")
+        } catch let error as DatabaseError {
+            #expect(error == expectedError)
+        } catch {
+            Issue.record("Expected DatabaseError.sqliteExecutionFailed")
+        }
+
+        #expect(eventCount == 0)
+        #expect(database.executeCallCount == 1)
+        cancellable.cancel()
+    }
+
+    @Test func setPublishesChangesToMultipleSubscribers() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var firstEventCount = 0
+        var secondEventCount = 0
+        let firstCancellable = store.changes.sink {
+            firstEventCount += 1
+        }
+        let secondCancellable = store.changes.sink {
+            secondEventCount += 1
+        }
+
+        try store.set(false, forKey: .launchAtLogin)
+
+        #expect(firstEventCount == 1)
+        #expect(secondEventCount == 1)
+        firstCancellable.cancel()
+        secondCancellable.cancel()
     }
 
     @Test func setPropagatesDatabaseExecutionError() {
@@ -137,6 +347,7 @@ private final class SettingsStoreStubDatabase: DatabaseConnection, @unchecked Se
     private let stringError: DatabaseError?
     private let executeError: DatabaseError?
     private(set) var stringValueCallCount = 0
+    private(set) var executeCallCount = 0
 
     init(
         stringResult: String? = nil,
@@ -149,6 +360,8 @@ private final class SettingsStoreStubDatabase: DatabaseConnection, @unchecked Se
     }
 
     func execute(sql: String) throws {
+        executeCallCount += 1
+
         if let executeError {
             throw executeError
         }
