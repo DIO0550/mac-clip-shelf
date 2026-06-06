@@ -18,9 +18,14 @@ final class SettingsStore: @unchecked Sendable {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let changesSubject = PassthroughSubject<Void, Never>()
+    private let keyChangesSubject = PassthroughSubject<SettingKey, Never>()
 
     var changes: AnyPublisher<Void, Never> {
         changesSubject.eraseToAnyPublisher()
+    }
+
+    var keyChanges: AnyPublisher<SettingKey, Never> {
+        keyChangesSubject.eraseToAnyPublisher()
     }
 
     init(database: any DatabaseConnection) {
@@ -131,6 +136,7 @@ final class SettingsStore: @unchecked Sendable {
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """)
         changesSubject.send()
+        keyChangesSubject.send(key)
     }
 
     private func storedValue(forKey key: SettingKey) throws -> String? {

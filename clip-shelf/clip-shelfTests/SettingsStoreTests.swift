@@ -204,6 +204,16 @@ struct SettingsStoreTests {
         cancellable.cancel()
     }
 
+    @Test func watchKeyCanBeSubscribedAsVoidPublisher() {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        let publisher: AnyPublisher<Void, Never> = store.watch(key: .launchAtLogin)
+
+        let cancellable = publisher.sink {}
+
+        cancellable.cancel()
+    }
+
     @Test func setPublishesChangesAfterSuccessfulUpsert() throws {
         let database = SettingsStoreStubDatabase()
         let store = SettingsStore(database: database)
@@ -219,11 +229,57 @@ struct SettingsStoreTests {
         cancellable.cancel()
     }
 
+    @Test func watchKeyPublishesForMatchingKey() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.watch(key: .launchAtLogin).sink {
+            eventCount += 1
+        }
+
+        try store.set(true, forKey: .launchAtLogin)
+
+        #expect(eventCount == 1)
+        #expect(database.executeCallCount == 1)
+        cancellable.cancel()
+    }
+
+    @Test func watchKeyDoesNotPublishForDifferentKey() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.watch(key: .launchAtLogin).sink {
+            eventCount += 1
+        }
+
+        try store.set(Settings.HistoryLimit.limited(250), forKey: .historyLimit)
+
+        #expect(eventCount == 0)
+        #expect(database.executeCallCount == 1)
+        cancellable.cancel()
+    }
+
     @Test func setPublishesChangesAfterSuccessfulEquivalentUpserts() throws {
         let database = SettingsStoreStubDatabase()
         let store = SettingsStore(database: database)
         var eventCount = 0
         let cancellable = store.changes.sink {
+            eventCount += 1
+        }
+
+        try store.set(true, forKey: .launchAtLogin)
+        try store.set(true, forKey: .launchAtLogin)
+
+        #expect(eventCount == 2)
+        #expect(database.executeCallCount == 2)
+        cancellable.cancel()
+    }
+
+    @Test func watchKeyPublishesForEquivalentUpserts() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.watch(key: .launchAtLogin).sink {
             eventCount += 1
         }
 
@@ -258,6 +314,29 @@ struct SettingsStoreTests {
         cancellable.cancel()
     }
 
+    @Test func watchKeyDoesNotPublishWhenDatabaseUpsertFails() {
+        let expectedError = DatabaseError.sqliteExecutionFailed(code: 1, message: "readonly")
+        let database = SettingsStoreStubDatabase(executeError: expectedError)
+        let store = SettingsStore(database: database)
+        var eventCount = 0
+        let cancellable = store.watch(key: .launchAtLogin).sink {
+            eventCount += 1
+        }
+
+        do {
+            try store.set(true, forKey: .launchAtLogin)
+            Issue.record("Expected database execution error")
+        } catch let error as DatabaseError {
+            #expect(error == expectedError)
+        } catch {
+            Issue.record("Expected DatabaseError.sqliteExecutionFailed")
+        }
+
+        #expect(eventCount == 0)
+        #expect(database.executeCallCount == 1)
+        cancellable.cancel()
+    }
+
     @Test func setPublishesChangesToMultipleSubscribers() throws {
         let database = SettingsStoreStubDatabase()
         let store = SettingsStore(database: database)
@@ -267,6 +346,26 @@ struct SettingsStoreTests {
             firstEventCount += 1
         }
         let secondCancellable = store.changes.sink {
+            secondEventCount += 1
+        }
+
+        try store.set(false, forKey: .launchAtLogin)
+
+        #expect(firstEventCount == 1)
+        #expect(secondEventCount == 1)
+        firstCancellable.cancel()
+        secondCancellable.cancel()
+    }
+
+    @Test func watchKeyPublishesToMultipleSubscribers() throws {
+        let database = SettingsStoreStubDatabase()
+        let store = SettingsStore(database: database)
+        var firstEventCount = 0
+        var secondEventCount = 0
+        let firstCancellable = store.watch(key: .launchAtLogin).sink {
+            firstEventCount += 1
+        }
+        let secondCancellable = store.watch(key: .launchAtLogin).sink {
             secondEventCount += 1
         }
 
