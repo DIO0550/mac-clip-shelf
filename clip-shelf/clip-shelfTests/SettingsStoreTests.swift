@@ -68,6 +68,42 @@ struct SettingsStoreTests {
         #expect(restored == expected)
     }
 
+    @Test func setValueCanBeRestoredFromSeparateStoreInstance() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let writer = try makeStore(temporaryDirectory: temporaryDirectory)
+        let expected = Settings.Shortcut(key: "K", modifiers: [.command, .option])
+
+        try writer.set(expected, forKey: .shortcutPicker)
+
+        let reader = try makeStore(temporaryDirectory: temporaryDirectory)
+        let restored = try reader.get(Settings.Shortcut.self, forKey: .shortcutPicker)
+
+        #expect(restored == expected)
+    }
+
+    @Test func resolvedSettingsCombinesStoredValuesWithDomainDefaults() throws {
+        let temporaryDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(temporaryDirectory) }
+
+        let store = try makeStore(temporaryDirectory: temporaryDirectory)
+
+        try store.set(true, forKey: .launchAtLogin)
+        try store.set(Settings.HistoryLimit.unlimited, forKey: .historyLimit)
+        try store.set(Settings.Appearance.dark, forKey: .appearance)
+
+        let settings = try store.resolvedSettings()
+
+        #expect(settings.launchAtLogin == true)
+        #expect(settings.historyLimit == .unlimited)
+        #expect(settings.appearance == .dark)
+        #expect(settings.respectConcealedType == Settings.default.respectConcealedType)
+        #expect(settings.includeImages == Settings.default.includeImages)
+        #expect(settings.pickerShortcut == Settings.default.pickerShortcut)
+        #expect(settings.historyShortcut == Settings.default.historyShortcut)
+    }
+
     @Test func setOverwritesExistingValue() throws {
         let temporaryDirectory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(temporaryDirectory) }
