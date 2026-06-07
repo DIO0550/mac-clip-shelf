@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/06/07.
 //
 
+import AppKit
 import Foundation
 import Testing
 @testable import clip_shelf
@@ -13,8 +14,12 @@ import Testing
 struct ClipboardMonitorTests {
 
     @Test func startCreatesRepeatingTimerWithPollingInterval() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        let monitor = ClipboardMonitor(scheduleTimer: scheduler.scheduleTimer)
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer
+        )
 
         monitor.start()
 
@@ -26,19 +31,28 @@ struct ClipboardMonitorTests {
     }
 
     @Test func repeatedStartDoesNotCreateDuplicateTimer() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        let monitor = ClipboardMonitor(scheduleTimer: scheduler.scheduleTimer)
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer
+        )
 
         monitor.start()
         monitor.start()
 
         #expect(monitor.isRunning)
         #expect(scheduler.requests.count == 1)
+        #expect(pasteboard.changeCountReadCount == 1)
     }
 
     @Test func stopInvalidatesTimerAndClearsRunningState() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        let monitor = ClipboardMonitor(scheduleTimer: scheduler.scheduleTimer)
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer
+        )
 
         monitor.start()
         monitor.stop()
@@ -48,8 +62,12 @@ struct ClipboardMonitorTests {
     }
 
     @Test func repeatedStopIsSafeNoOp() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        let monitor = ClipboardMonitor(scheduleTimer: scheduler.scheduleTimer)
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer
+        )
 
         monitor.start()
         monitor.stop()
@@ -61,7 +79,9 @@ struct ClipboardMonitorTests {
 
     @Test func monitorDeinitInvalidatesHeldTimer() {
         let recorder = ClipboardMonitorTimerInvalidationRecorder()
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         var monitor: ClipboardMonitor? = ClipboardMonitor(
+            pasteboard: pasteboard,
             scheduleTimer: { _, _, _, _ in
                 ClipboardMonitorFakeTimer(recorder: recorder)
             }
@@ -73,38 +93,101 @@ struct ClipboardMonitorTests {
         #expect(recorder.invalidateCallCount == 1)
     }
 
-    @Test func runningTimerTickCallsPollClosure() {
+    @Test func firstStartRecordsInitialChangeCountWithoutFetchingItems() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var pollCallCount = 0
+        var receivedItems: [[NSPasteboardItem]] = []
         let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            poll: {
-                pollCallCount += 1
-            }
+            onPasteboardItemsChanged: { receivedItems.append($0) }
+        )
+
+        monitor.start()
+
+        #expect(pasteboard.changeCountReadCount == 1)
+        #expect(pasteboard.pasteboardItemsReadCount == 0)
+        #expect(receivedItems.isEmpty)
+    }
+
+    @Test func unchangedTimerTickDoesNotFetchItemsOrNotify() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
+        let scheduler = ClipboardMonitorTimerSchedulerSpy()
+        var receivedItems: [[NSPasteboardItem]] = []
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer,
+            onPasteboardItemsChanged: { receivedItems.append($0) }
         )
 
         monitor.start()
         scheduler.timers.first?.fire()
 
-        #expect(pollCallCount == 1)
+        #expect(pasteboard.changeCountReadCount == 2)
+        #expect(pasteboard.pasteboardItemsReadCount == 0)
+        #expect(receivedItems.isEmpty)
     }
 
-    @Test func timerTickAfterStopDoesNotCallPollClosure() {
+    @Test func changedTimerTickFetchesItemsAndNotifies() {
+        let item = NSPasteboardItem()
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: [item])
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var pollCallCount = 0
+        var receivedItems: [[NSPasteboardItem]] = []
         let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            poll: {
-                pollCallCount += 1
-            }
+            onPasteboardItemsChanged: { receivedItems.append($0) }
+        )
+
+        monitor.start()
+        pasteboard.setChangeCount(11)
+        scheduler.timers.first?.fire()
+
+        #expect(pasteboard.changeCountReadCount == 2)
+        #expect(pasteboard.pasteboardItemsReadCount == 1)
+        #expect(receivedItems.count == 1)
+        #expect(receivedItems.first?.first === item)
+    }
+
+    @Test func changedTimerTickWithNilItemsNotifiesEmptyItems() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: nil)
+        let scheduler = ClipboardMonitorTimerSchedulerSpy()
+        var receivedItems: [[NSPasteboardItem]] = []
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer,
+            onPasteboardItemsChanged: { receivedItems.append($0) }
+        )
+
+        monitor.start()
+        pasteboard.setChangeCount(11)
+        scheduler.timers.first?.fire()
+
+        #expect(pasteboard.pasteboardItemsReadCount == 1)
+        #expect(receivedItems.count == 1)
+        #expect(receivedItems.first?.isEmpty == true)
+    }
+
+    @Test func timerTickAfterStopDoesNotReadPasteboardOrNotify() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
+        let scheduler = ClipboardMonitorTimerSchedulerSpy()
+        var receivedItems: [[NSPasteboardItem]] = []
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer,
+            onPasteboardItemsChanged: { receivedItems.append($0) }
         )
 
         monitor.start()
         let timer = scheduler.timers.first
         monitor.stop()
+        pasteboard.resetReadCounts()
+        pasteboard.setChangeCount(11)
         timer?.fire()
 
-        #expect(pollCallCount == 0)
+        #expect(pasteboard.changeCountReadCount == 0)
+        #expect(pasteboard.pasteboardItemsReadCount == 0)
+        #expect(receivedItems.isEmpty)
     }
 }
 
@@ -137,7 +220,7 @@ private final class ClipboardMonitorTimerSchedulerSpy {
 private final class ClipboardMonitorFakeTimer: ClipboardMonitorTimer {
     private let block: @MainActor @Sendable () -> Void
     private let recorder: ClipboardMonitorTimerInvalidationRecorder?
-    private(set) var invalidateCallCount = 0
+    nonisolated(unsafe) private(set) var invalidateCallCount = 0
 
     init(
         recorder: ClipboardMonitorTimerInvalidationRecorder? = nil,
@@ -147,7 +230,7 @@ private final class ClipboardMonitorFakeTimer: ClipboardMonitorTimer {
         self.block = block
     }
 
-    func invalidate() {
+    nonisolated func invalidate() {
         invalidateCallCount += 1
         recorder?.invalidateCallCount += 1
     }
@@ -159,5 +242,37 @@ private final class ClipboardMonitorFakeTimer: ClipboardMonitorTimer {
 
 @MainActor
 private final class ClipboardMonitorTimerInvalidationRecorder {
-    var invalidateCallCount = 0
+    nonisolated(unsafe) var invalidateCallCount = 0
+}
+
+@MainActor
+private final class ClipboardMonitorPasteboardSpy: ClipboardPasteboardReader {
+    private var storedChangeCount: Int
+    private var storedPasteboardItems: [NSPasteboardItem]?
+    private(set) var changeCountReadCount = 0
+    private(set) var pasteboardItemsReadCount = 0
+
+    init(changeCount: Int, pasteboardItems: [NSPasteboardItem]? = []) {
+        self.storedChangeCount = changeCount
+        self.storedPasteboardItems = pasteboardItems
+    }
+
+    func setChangeCount(_ changeCount: Int) {
+        storedChangeCount = changeCount
+    }
+
+    func resetReadCounts() {
+        changeCountReadCount = 0
+        pasteboardItemsReadCount = 0
+    }
+
+    var changeCount: Int {
+        changeCountReadCount += 1
+        return storedChangeCount
+    }
+
+    var pasteboardItems: [NSPasteboardItem]? {
+        pasteboardItemsReadCount += 1
+        return storedPasteboardItems
+    }
 }
