@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/06/07.
 //
 
+import AppKit
 import Foundation
 
 @MainActor
@@ -22,16 +23,22 @@ final class ClipboardMonitor {
         timerBox != nil
     }
 
+    typealias ItemsChangeHandler = @MainActor @Sendable ([NSPasteboardItem]) -> Void
+
     private var timerBox: ClipboardMonitorTimerBox?
+    private var lastChangeCount: Int?
+    private let pasteboard: any ClipboardPasteboardReader
     private let scheduleTimer: TimerScheduler
-    private let poll: @MainActor @Sendable () -> Void
+    private let onPasteboardItemsChanged: ItemsChangeHandler
 
     init(
+        pasteboard: any ClipboardPasteboardReader = NSPasteboard.general,
         scheduleTimer: @escaping TimerScheduler = ClipboardMonitor.scheduleFoundationTimer,
-        poll: @escaping @MainActor @Sendable () -> Void = {}
+        onPasteboardItemsChanged: @escaping ItemsChangeHandler = { _ in }
     ) {
+        self.pasteboard = pasteboard
         self.scheduleTimer = scheduleTimer
-        self.poll = poll
+        self.onPasteboardItemsChanged = onPasteboardItemsChanged
     }
 
     func start() {
@@ -39,6 +46,7 @@ final class ClipboardMonitor {
             return
         }
 
+        lastChangeCount = pasteboard.changeCount
         let timer = scheduleTimer(Self.pollingInterval, true, .common) { [weak self] in
             self?.handleTimerTick()
         }
@@ -48,6 +56,7 @@ final class ClipboardMonitor {
     func stop() {
         timerBox?.invalidate()
         timerBox = nil
+        lastChangeCount = nil
     }
 
     private func handleTimerTick() {
@@ -55,7 +64,13 @@ final class ClipboardMonitor {
             return
         }
 
-        poll()
+        let currentChangeCount = pasteboard.changeCount
+        guard currentChangeCount != lastChangeCount else {
+            return
+        }
+
+        lastChangeCount = currentChangeCount
+        onPasteboardItemsChanged(pasteboard.pasteboardItems ?? [])
     }
 
     private static func scheduleFoundationTimer(
@@ -73,6 +88,13 @@ final class ClipboardMonitor {
         return timer
     }
 }
+
+protocol ClipboardPasteboardReader: AnyObject {
+    var changeCount: Int { get }
+    var pasteboardItems: [NSPasteboardItem]? { get }
+}
+
+extension NSPasteboard: ClipboardPasteboardReader {}
 
 private final class ClipboardMonitorTimerBox {
     // The box is owned from MainActor, but deinit is nonisolated. Keep the
