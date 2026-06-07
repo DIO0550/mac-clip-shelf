@@ -230,7 +230,7 @@ private final class ClipboardMonitorFakeTimer: ClipboardMonitorTimer {
         self.block = block
     }
 
-    func invalidate() {
+    nonisolated func invalidate() {
         invalidateCallCount += 1
         recorder?.invalidateCallCount += 1
     }
