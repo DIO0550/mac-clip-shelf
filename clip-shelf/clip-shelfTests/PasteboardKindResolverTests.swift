@@ -60,6 +60,26 @@ struct PasteboardKindResolverTests {
         #expect(content == .file(path: fileURL.path))
     }
 
+    @Test func fileURLDataRepresentationItemResolvesFileContent() {
+        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let item = NSPasteboardItem()
+        item.setData(fileURL.dataRepresentation, forType: .fileURL)
+
+        let content = PasteboardKindResolver().resolve(item)
+
+        #expect(content == .file(path: fileURL.path))
+    }
+
+    @Test func fileURLUTF8DataItemResolvesFileContent() {
+        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let item = NSPasteboardItem()
+        item.setData(Data((fileURL.absoluteString + "\0").utf8), forType: .fileURL)
+
+        let content = PasteboardKindResolver().resolve(item)
+
+        #expect(content == .file(path: fileURL.path))
+    }
+
     @Test func unsupportedItemResolvesNil() {
         let item = NSPasteboardItem()
         item.setString("Unsupported", forType: NSPasteboard.PasteboardType("com.example.unsupported"))
