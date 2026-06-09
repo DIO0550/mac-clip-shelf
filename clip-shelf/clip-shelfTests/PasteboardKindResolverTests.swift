@@ -51,7 +51,7 @@ struct PasteboardKindResolverTests {
     }
 
     @Test func fileURLItemResolvesFileContent() {
-        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()
         item.setString(fileURL.absoluteString, forType: .fileURL)
 
@@ -61,7 +61,7 @@ struct PasteboardKindResolverTests {
     }
 
     @Test func fileURLDataRepresentationItemResolvesFileContent() {
-        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()
         item.setData(fileURL.dataRepresentation, forType: .fileURL)
 
@@ -71,7 +71,7 @@ struct PasteboardKindResolverTests {
     }
 
     @Test func fileURLUTF8DataItemResolvesFileContent() {
-        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()
         item.setData(Data((fileURL.absoluteString + "\0").utf8), forType: .fileURL)
 
@@ -89,7 +89,7 @@ struct PasteboardKindResolverTests {
 
     @Test func imageFileAndTextItemPrioritizesImage() {
         let imageData = Data([0x89, 0x50, 0x4E, 0x47])
-        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()
         item.setString("Hello", forType: .string)
         item.setString(fileURL.absoluteString, forType: .fileURL)
@@ -101,7 +101,7 @@ struct PasteboardKindResolverTests {
     }
 
     @Test func fileAndTextItemPrioritizesFile() {
-        let fileURL = URL(fileURLWithPath: "/Users/dio/Desktop/example.txt")
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()
         item.setString("Hello", forType: .string)
         item.setString(fileURL.absoluteString, forType: .fileURL)
