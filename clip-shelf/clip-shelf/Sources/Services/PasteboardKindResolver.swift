@@ -9,23 +9,35 @@ import AppKit
 import Foundation
 
 struct PasteboardKindResolver {
+    struct Options: Equatable, Sendable {
+        var includeImages: Bool
+
+        static let `default` = Options(includeImages: true)
+    }
+
     private static let imageTypes: [NSPasteboard.PasteboardType] = [
         .png,
         .tiff,
         NSPasteboard.PasteboardType("public.jpeg")
     ]
 
-    func resolve(_ items: [NSPasteboardItem]) -> HistoryItem.Content? {
+    func resolve(
+        _ items: [NSPasteboardItem],
+        options: Options = .default
+    ) -> HistoryItem.Content? {
         for item in items {
-            if let content = resolve(item) {
+            if let content = resolve(item, options: options) {
                 return content
             }
         }
         return nil
     }
 
-    func resolve(_ item: NSPasteboardItem) -> HistoryItem.Content? {
-        if let image = imageContent(from: item) {
+    func resolve(
+        _ item: NSPasteboardItem,
+        options: Options = .default
+    ) -> HistoryItem.Content? {
+        if let image = imageContent(from: item, options: options) {
             return image
         }
         if let file = fileContent(from: item) {
@@ -37,7 +49,14 @@ struct PasteboardKindResolver {
         return nil
     }
 
-    private func imageContent(from item: NSPasteboardItem) -> HistoryItem.Content? {
+    private func imageContent(
+        from item: NSPasteboardItem,
+        options: Options
+    ) -> HistoryItem.Content? {
+        guard options.includeImages else {
+            return nil
+        }
+
         for type in Self.imageTypes {
             guard let data = item.data(forType: type) else {
                 continue
