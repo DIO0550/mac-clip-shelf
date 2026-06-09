@@ -299,6 +299,15 @@ struct ClipboardMonitorTests {
         #expect(receivedContents.isEmpty)
     }
 
+    @Test func internalEchoItemIsExcluded() {
+        let item = NSPasteboardItem()
+        item.setString("Echo", forType: .string)
+        item.setString(UUID().uuidString, forType: ClipboardMonitor.internalEchoType)
+        let (_, _, receivedContents) = runChangedTick(with: [item])
+
+        #expect(receivedContents().isEmpty)
+    }
+
     private func runChangedTick(
         with items: [NSPasteboardItem],
         settings: Settings = .default
