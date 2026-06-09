@@ -19,6 +19,11 @@ final class ClipboardMonitor {
         _ block: @escaping @MainActor @Sendable () -> Void
     ) -> any ClipboardMonitorTimer
 
+    typealias SettingsProvider = @MainActor @Sendable () -> Settings
+
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+
     var isRunning: Bool {
         timerBox != nil
     }
@@ -30,17 +35,20 @@ final class ClipboardMonitor {
     private let pasteboard: any ClipboardPasteboardReader
     private let scheduleTimer: TimerScheduler
     private let kindResolver: PasteboardKindResolver
+    private let settingsProvider: SettingsProvider
     private let onHistoryContentResolved: ContentResolvedHandler
 
     init(
         pasteboard: any ClipboardPasteboardReader = NSPasteboard.general,
         scheduleTimer: @escaping TimerScheduler = ClipboardMonitor.scheduleFoundationTimer,
         kindResolver: PasteboardKindResolver = PasteboardKindResolver(),
+        settingsProvider: @escaping SettingsProvider = { .default },
         onHistoryContentResolved: @escaping ContentResolvedHandler = { _ in }
     ) {
         self.pasteboard = pasteboard
         self.scheduleTimer = scheduleTimer
         self.kindResolver = kindResolver
+        self.settingsProvider = settingsProvider
         self.onHistoryContentResolved = onHistoryContentResolved
     }
 
@@ -74,11 +82,36 @@ final class ClipboardMonitor {
 
         lastChangeCount = currentChangeCount
         let items = pasteboard.pasteboardItems ?? []
-        guard let content = kindResolver.resolve(items) else {
+        let settings = settingsProvider()
+        let eligibleItems = filteredItems(from: items, settings: settings)
+        let options = PasteboardKindResolver.Options(includeImages: settings.includeImages)
+        guard let content = kindResolver.resolve(eligibleItems, options: options) else {
             return
         }
 
         onHistoryContentResolved(content)
+    }
+
+    private func filteredItems(
+        from items: [NSPasteboardItem],
+        settings: Settings
+    ) -> [NSPasteboardItem] {
+        items.filter { !shouldExcludeEntireItem($0, settings: settings) }
+    }
+
+    private func shouldExcludeEntireItem(
+        _ item: NSPasteboardItem,
+        settings: Settings
+    ) -> Bool {
+        if item.types.contains(Self.transientType) {
+            return true
+        }
+
+        if settings.respectConcealedType, item.types.contains(Self.concealedType) {
+            return true
+        }
+
+        return false
     }
 
     private static func scheduleFoundationTimer(
