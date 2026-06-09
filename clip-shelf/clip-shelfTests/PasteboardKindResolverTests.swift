@@ -100,6 +100,59 @@ struct PasteboardKindResolverTests {
         #expect(content == .image(imageData, typeIdentifier: "public.png"))
     }
 
+    @Test func imageAndTextItemResolvesTextWhenImagesAreDisabled() {
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        item.setString("Fallback text", forType: .string)
+
+        let content = PasteboardKindResolver().resolve(
+            item,
+            options: PasteboardKindResolver.Options(includeImages: false)
+        )
+
+        #expect(content == .text("Fallback text", rtf: nil))
+    }
+
+    @Test func imageAndFileItemResolvesFileWhenImagesAreDisabled() {
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        item.setString(fileURL.absoluteString, forType: .fileURL)
+
+        let content = PasteboardKindResolver().resolve(
+            item,
+            options: PasteboardKindResolver.Options(includeImages: false)
+        )
+
+        #expect(content == .file(path: fileURL.path))
+    }
+
+    @Test func imageOnlyItemResolvesNilWhenImagesAreDisabled() {
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+
+        let content = PasteboardKindResolver().resolve(
+            item,
+            options: PasteboardKindResolver.Options(includeImages: false)
+        )
+
+        #expect(content == nil)
+    }
+
+    @Test func resolveItemsContinuesAfterImageOnlyItemWhenImagesAreDisabled() {
+        let imageOnlyItem = NSPasteboardItem()
+        imageOnlyItem.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        let textItem = NSPasteboardItem()
+        textItem.setString("Later text", forType: .string)
+
+        let content = PasteboardKindResolver().resolve(
+            [imageOnlyItem, textItem],
+            options: PasteboardKindResolver.Options(includeImages: false)
+        )
+
+        #expect(content == .text("Later text", rtf: nil))
+    }
+
     @Test func fileAndTextItemPrioritizesFile() {
         let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
         let item = NSPasteboardItem()

@@ -187,6 +187,96 @@ struct ClipboardMonitorTests {
         #expect(receivedContents.isEmpty)
     }
 
+    @Test func transientTypeItemIsAlwaysExcluded() {
+        let item = NSPasteboardItem()
+        item.setString("Temporary", forType: .string)
+        item.setString("", forType: .transientMarker)
+        let (pasteboard, scheduler, receivedContents) = runChangedTick(with: [item])
+
+        #expect(pasteboard.pasteboardItemsReadCount == 1)
+        #expect(receivedContents().isEmpty)
+
+        scheduler.timers.first?.fire()
+
+        #expect(pasteboard.pasteboardItemsReadCount == 1)
+        #expect(receivedContents().isEmpty)
+    }
+
+    @Test func concealedTypeItemIsExcludedWhenRespectIsEnabled() {
+        let item = NSPasteboardItem()
+        item.setString("Secret", forType: .string)
+        item.setString("", forType: .concealedMarker)
+        let (_, _, receivedContents) = runChangedTick(with: [item])
+
+        #expect(receivedContents().isEmpty)
+    }
+
+    @Test func concealedTypeItemResolvesWhenRespectIsDisabled() {
+        let item = NSPasteboardItem()
+        item.setString("Visible", forType: .string)
+        item.setString("", forType: .concealedMarker)
+        var settings = Settings.default
+        settings.respectConcealedType = false
+        let (_, _, receivedContents) = runChangedTick(with: [item], settings: settings)
+
+        #expect(receivedContents() == [.text("Visible", rtf: nil)])
+    }
+
+    @Test func imageOnlyItemDoesNotNotifyWhenImagesAreDisabled() {
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        var settings = Settings.default
+        settings.includeImages = false
+        let (_, _, receivedContents) = runChangedTick(with: [item], settings: settings)
+
+        #expect(receivedContents().isEmpty)
+    }
+
+    @Test func mixedImageAndTextItemFallsBackToTextWhenImagesAreDisabled() {
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        item.setString("Fallback text", forType: .string)
+        var settings = Settings.default
+        settings.includeImages = false
+        let (_, _, receivedContents) = runChangedTick(with: [item], settings: settings)
+
+        #expect(receivedContents() == [.text("Fallback text", rtf: nil)])
+    }
+
+    @Test func mixedImageAndFileItemFallsBackToFileWhenImagesAreDisabled() {
+        let fileURL = URL(fileURLWithPath: "/tmp/example.txt")
+        let item = NSPasteboardItem()
+        item.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        item.setString(fileURL.absoluteString, forType: .fileURL)
+        var settings = Settings.default
+        settings.includeImages = false
+        let (_, _, receivedContents) = runChangedTick(with: [item], settings: settings)
+
+        #expect(receivedContents() == [.file(path: fileURL.path)])
+    }
+
+    @Test func imageOnlyItemDoesNotStopLaterTextItemWhenImagesAreDisabled() {
+        let imageOnlyItem = NSPasteboardItem()
+        imageOnlyItem.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        let textItem = NSPasteboardItem()
+        textItem.setString("Later text", forType: .string)
+        var settings = Settings.default
+        settings.includeImages = false
+        let (_, _, receivedContents) = runChangedTick(with: [imageOnlyItem, textItem], settings: settings)
+
+        #expect(receivedContents() == [.text("Later text", rtf: nil)])
+    }
+
+    @Test func mixedImageAndTextItemStillPrioritizesImageWhenImagesAreEnabled() {
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47])
+        let item = NSPasteboardItem()
+        item.setData(imageData, forType: .png)
+        item.setString("Fallback text", forType: .string)
+        let (_, _, receivedContents) = runChangedTick(with: [item])
+
+        #expect(receivedContents() == [.image(imageData, typeIdentifier: "public.png")])
+    }
+
     @Test func timerTickAfterStopDoesNotReadPasteboardOrNotify() {
         let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
@@ -208,6 +298,36 @@ struct ClipboardMonitorTests {
         #expect(pasteboard.pasteboardItemsReadCount == 0)
         #expect(receivedContents.isEmpty)
     }
+
+    private func runChangedTick(
+        with items: [NSPasteboardItem],
+        settings: Settings = .default
+    ) -> (
+        pasteboard: ClipboardMonitorPasteboardSpy,
+        scheduler: ClipboardMonitorTimerSchedulerSpy,
+        receivedContents: () -> [HistoryItem.Content]
+    ) {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: items)
+        let scheduler = ClipboardMonitorTimerSchedulerSpy()
+        var receivedContents: [HistoryItem.Content] = []
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer,
+            settingsProvider: { settings },
+            onHistoryContentResolved: { receivedContents.append($0) }
+        )
+
+        monitor.start()
+        pasteboard.setChangeCount(11)
+        scheduler.timers.first?.fire()
+
+        return (pasteboard, scheduler, { receivedContents })
+    }
+}
+
+private extension NSPasteboard.PasteboardType {
+    static let concealedMarker = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    static let transientMarker = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
 }
 
 @MainActor
