@@ -9,13 +9,20 @@ import Foundation
 
 @MainActor
 final class AppDependencies {
-    init() {
-        // Future dependency wiring order:
-        // 1. ModelContainer.clipShelf()
-        // 2. SettingsStore()
-        // 3. HistoryService(database:)
-        // 4. PasteService(historyService:)
-        // 5. ClipboardMonitor(historyService:settings:)
-        // 6. HotkeyService(settings:)
+    let database: any DatabaseConnection
+    let settings: SettingsStore
+    let history: HistoryService
+    let monitor: ClipboardMonitor
+    let hotkey: HotkeyService
+    let paste: PasteService
+
+    init(databaseURL: URL? = nil) throws {
+        let connector = SQLiteDatabaseConnector()
+        self.database = try connector.makeConnection(databaseURL: databaseURL)
+        self.settings = SettingsStore(database: database)
+        self.history = HistoryService(database: database)
+        self.paste = PasteService(historyService: history)
+        self.monitor = ClipboardMonitor(historyService: history, settingsStore: settings)
+        self.hotkey = HotkeyService(settings: settings)
     }
 }
