@@ -23,22 +23,25 @@ final class ClipboardMonitor {
         timerBox != nil
     }
 
-    typealias ItemsChangeHandler = @MainActor @Sendable ([NSPasteboardItem]) -> Void
+    typealias ContentResolvedHandler = @MainActor @Sendable (HistoryItem.Content) -> Void
 
     private var timerBox: ClipboardMonitorTimerBox?
     private var lastChangeCount: Int?
     private let pasteboard: any ClipboardPasteboardReader
     private let scheduleTimer: TimerScheduler
-    private let onPasteboardItemsChanged: ItemsChangeHandler
+    private let kindResolver: PasteboardKindResolver
+    private let onHistoryContentResolved: ContentResolvedHandler
 
     init(
         pasteboard: any ClipboardPasteboardReader = NSPasteboard.general,
         scheduleTimer: @escaping TimerScheduler = ClipboardMonitor.scheduleFoundationTimer,
-        onPasteboardItemsChanged: @escaping ItemsChangeHandler = { _ in }
+        kindResolver: PasteboardKindResolver = PasteboardKindResolver(),
+        onHistoryContentResolved: @escaping ContentResolvedHandler = { _ in }
     ) {
         self.pasteboard = pasteboard
         self.scheduleTimer = scheduleTimer
-        self.onPasteboardItemsChanged = onPasteboardItemsChanged
+        self.kindResolver = kindResolver
+        self.onHistoryContentResolved = onHistoryContentResolved
     }
 
     func start() {
@@ -70,7 +73,12 @@ final class ClipboardMonitor {
         }
 
         lastChangeCount = currentChangeCount
-        onPasteboardItemsChanged(pasteboard.pasteboardItems ?? [])
+        let items = pasteboard.pasteboardItems ?? []
+        guard let content = kindResolver.resolve(items) else {
+            return
+        }
+
+        onHistoryContentResolved(content)
     }
 
     private static func scheduleFoundationTimer(

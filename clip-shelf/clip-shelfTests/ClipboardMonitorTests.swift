@@ -96,28 +96,28 @@ struct ClipboardMonitorTests {
     @Test func firstStartRecordsInitialChangeCountWithoutFetchingItems() {
         let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var receivedItems: [[NSPasteboardItem]] = []
+        var receivedContents: [HistoryItem.Content] = []
         let monitor = ClipboardMonitor(
             pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            onPasteboardItemsChanged: { receivedItems.append($0) }
+            onHistoryContentResolved: { receivedContents.append($0) }
         )
 
         monitor.start()
 
         #expect(pasteboard.changeCountReadCount == 1)
         #expect(pasteboard.pasteboardItemsReadCount == 0)
-        #expect(receivedItems.isEmpty)
+        #expect(receivedContents.isEmpty)
     }
 
     @Test func unchangedTimerTickDoesNotFetchItemsOrNotify() {
         let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var receivedItems: [[NSPasteboardItem]] = []
+        var receivedContents: [HistoryItem.Content] = []
         let monitor = ClipboardMonitor(
             pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            onPasteboardItemsChanged: { receivedItems.append($0) }
+            onHistoryContentResolved: { receivedContents.append($0) }
         )
 
         monitor.start()
@@ -125,18 +125,19 @@ struct ClipboardMonitorTests {
 
         #expect(pasteboard.changeCountReadCount == 2)
         #expect(pasteboard.pasteboardItemsReadCount == 0)
-        #expect(receivedItems.isEmpty)
+        #expect(receivedContents.isEmpty)
     }
 
-    @Test func changedTimerTickFetchesItemsAndNotifies() {
+    @Test func changedTimerTickFetchesItemsAndNotifiesResolvedContent() {
         let item = NSPasteboardItem()
+        item.setString("Hello", forType: .string)
         let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: [item])
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var receivedItems: [[NSPasteboardItem]] = []
+        var receivedContents: [HistoryItem.Content] = []
         let monitor = ClipboardMonitor(
             pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            onPasteboardItemsChanged: { receivedItems.append($0) }
+            onHistoryContentResolved: { receivedContents.append($0) }
         )
 
         monitor.start()
@@ -145,18 +146,19 @@ struct ClipboardMonitorTests {
 
         #expect(pasteboard.changeCountReadCount == 2)
         #expect(pasteboard.pasteboardItemsReadCount == 1)
-        #expect(receivedItems.count == 1)
-        #expect(receivedItems.first?.first === item)
+        #expect(receivedContents == [.text("Hello", rtf: nil)])
     }
 
-    @Test func changedTimerTickWithNilItemsNotifiesEmptyItems() {
-        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: nil)
+    @Test func changedTimerTickWithUnsupportedItemsDoesNotNotify() {
+        let item = NSPasteboardItem()
+        item.setString("Unsupported", forType: NSPasteboard.PasteboardType("com.example.unsupported"))
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: [item])
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var receivedItems: [[NSPasteboardItem]] = []
+        var receivedContents: [HistoryItem.Content] = []
         let monitor = ClipboardMonitor(
             pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            onPasteboardItemsChanged: { receivedItems.append($0) }
+            onHistoryContentResolved: { receivedContents.append($0) }
         )
 
         monitor.start()
@@ -164,18 +166,35 @@ struct ClipboardMonitorTests {
         scheduler.timers.first?.fire()
 
         #expect(pasteboard.pasteboardItemsReadCount == 1)
-        #expect(receivedItems.count == 1)
-        #expect(receivedItems.first?.isEmpty == true)
+        #expect(receivedContents.isEmpty)
+    }
+
+    @Test func changedTimerTickWithNilItemsDoesNotNotify() {
+        let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10, pasteboardItems: nil)
+        let scheduler = ClipboardMonitorTimerSchedulerSpy()
+        var receivedContents: [HistoryItem.Content] = []
+        let monitor = ClipboardMonitor(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduler.scheduleTimer,
+            onHistoryContentResolved: { receivedContents.append($0) }
+        )
+
+        monitor.start()
+        pasteboard.setChangeCount(11)
+        scheduler.timers.first?.fire()
+
+        #expect(pasteboard.pasteboardItemsReadCount == 1)
+        #expect(receivedContents.isEmpty)
     }
 
     @Test func timerTickAfterStopDoesNotReadPasteboardOrNotify() {
         let pasteboard = ClipboardMonitorPasteboardSpy(changeCount: 10)
         let scheduler = ClipboardMonitorTimerSchedulerSpy()
-        var receivedItems: [[NSPasteboardItem]] = []
+        var receivedContents: [HistoryItem.Content] = []
         let monitor = ClipboardMonitor(
             pasteboard: pasteboard,
             scheduleTimer: scheduler.scheduleTimer,
-            onPasteboardItemsChanged: { receivedItems.append($0) }
+            onHistoryContentResolved: { receivedContents.append($0) }
         )
 
         monitor.start()
@@ -187,7 +206,7 @@ struct ClipboardMonitorTests {
 
         #expect(pasteboard.changeCountReadCount == 0)
         #expect(pasteboard.pasteboardItemsReadCount == 0)
-        #expect(receivedItems.isEmpty)
+        #expect(receivedContents.isEmpty)
     }
 }
 
