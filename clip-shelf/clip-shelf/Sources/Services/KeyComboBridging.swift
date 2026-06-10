@@ -69,7 +69,11 @@ extension KeyCombo {
     }
 
     static func keyName(for keyCode: UInt32) -> String {
-        keyNameByCode[keyCode] ?? String(keyCode)
+        supportedKeyName(for: keyCode) ?? String(keyCode)
+    }
+
+    static func supportedKeyName(for keyCode: UInt32) -> String? {
+        keyNameByCode[keyCode]
     }
 
     private static let keyCodeByName: [String: UInt32] = [

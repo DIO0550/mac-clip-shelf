@@ -25,4 +25,9 @@ struct HotkeyServiceTests {
         #expect(HotkeyService.isKnownReservedShortcut(.init(key: "4", modifiers: [.command, .shift])))
         #expect(!HotkeyService.isKnownReservedShortcut(Settings.default.pickerShortcut))
     }
+
+    @Test func supportedKeyNameRejectsUnknownKeyCodes() {
+        #expect(KeyCombo.supportedKeyName(for: 0) == "A")
+        #expect(KeyCombo.supportedKeyName(for: 123) == nil)
+    }
 }

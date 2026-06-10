@@ -203,7 +203,7 @@ final class ShortcutCaptureNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        guard let key = KeyCombo.keyName(for: UInt32(event.keyCode)).nonEmpty else {
+        guard let key = KeyCombo.supportedKeyName(for: UInt32(event.keyCode)).nonEmpty else {
             return
         }
 
