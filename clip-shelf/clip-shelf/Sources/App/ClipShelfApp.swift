@@ -14,14 +14,18 @@ struct ClipShelfApp: App {
 
     var body: some Scene {
         SwiftUI.Settings {
-            EmptyView()
+            if let dependencies = appDelegate.dependencies {
+                SettingsView(dependencies: dependencies)
+            } else {
+                EmptyView()
+            }
         }
     }
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var dependencies: AppDependencies?
+final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+    @Published fileprivate private(set) var dependencies: AppDependencies?
     private var menuBarController: MenuBarController?
     private var pastePickerWindow: PastePickerWindow?
     private var historyWindow: HistoryWindow?
