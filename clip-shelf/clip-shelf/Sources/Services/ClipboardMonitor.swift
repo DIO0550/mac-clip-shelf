@@ -154,13 +154,15 @@ final class ClipboardMonitor {
     private static func historyItem(from content: HistoryItem.Content) -> HistoryItem? {
         switch content {
         case let .text(text, rtf):
+            let sizeBytes = text.utf8.count + (rtf?.count ?? 0)
             guard !text.isEmpty else {
                 return nil
             }
-            return HistoryItem(
-                content: .text(text, rtf: rtf),
-                sizeBytes: min(text.utf8.count + (rtf?.count ?? 0), maxTextBytes)
-            )
+            guard sizeBytes <= maxTextBytes else {
+                logger.warning("Skipped oversized text clipboard item: \(sizeBytes, privacy: .public) bytes")
+                return nil
+            }
+            return HistoryItem(content: .text(text, rtf: rtf), sizeBytes: sizeBytes)
         case let .image(data, typeIdentifier):
             guard data.count <= maxImageBytes else {
                 logger.warning("Skipped oversized image clipboard item: \(data.count, privacy: .public) bytes")
