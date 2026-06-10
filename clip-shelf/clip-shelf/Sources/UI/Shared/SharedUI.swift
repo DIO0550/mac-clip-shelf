@@ -103,6 +103,7 @@ final class HistoryListViewModel: ObservableObject {
     let paste: PasteService
     private var cancellables: Set<AnyCancellable> = []
     private var deletedItem: HistoryItem?
+    private var deleteUndoTask: Task<Void, Never>?
 
     init(history: HistoryService, paste: PasteService, limit: Int? = nil) {
         self.history = history
@@ -112,6 +113,10 @@ final class HistoryListViewModel: ObservableObject {
             .sink { [weak self] in self?.reload(limit: limit) }
             .store(in: &cancellables)
         reload(limit: limit)
+    }
+
+    deinit {
+        deleteUndoTask?.cancel()
     }
 
     func reload(limit: Int? = nil) {
@@ -193,20 +198,26 @@ final class HistoryListViewModel: ObservableObject {
     }
 
     func delete(_ item: HistoryItem) {
+        deleteUndoTask?.cancel()
         deletedItem = item
         try? history.delete(id: item.id)
         toastMessage = "Deleted. Undo is available for 10 seconds."
-        Task { [weak self] in
+        deleteUndoTask = Task { [weak self, itemID = item.id] in
             try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard self?.deletedItem?.id == itemID else { return }
                 self?.deletedItem = nil
                 self?.toastMessage = nil
+                self?.deleteUndoTask = nil
             }
         }
     }
 
     func restoreDeleted() {
         guard let deletedItem else { return }
+        deleteUndoTask?.cancel()
+        deleteUndoTask = nil
         _ = try? history.restore(deletedItem)
         self.deletedItem = nil
         toastMessage = nil
