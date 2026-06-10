@@ -193,6 +193,10 @@ final class HistoryListViewModel: ObservableObject {
         try? paste.copyOnly(item)
     }
 
+    func copyPlainText(_ item: HistoryItem) {
+        try? paste.copyPlainTextOnly(item)
+    }
+
     func togglePin(_ item: HistoryItem) {
         _ = try? history.togglePin(id: item.id)
     }

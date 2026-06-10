@@ -47,6 +47,22 @@ final class PasteService {
         }
     }
 
+    func copyPlainTextOnly(_ item: HistoryItem) throws {
+        guard case let .text(text, _) = item.content else {
+            try copyOnly(item)
+            return
+        }
+
+        pasteboard.clearContents()
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(UUID().uuidString, forType: ClipboardMonitor.internalEchoType)
+        pasteboardItem.setString(text, forType: .string)
+
+        guard pasteboard.writeObjects([pasteboardItem]) else {
+            throw PasteError.pasteboardWriteFailed
+        }
+    }
+
     func paste(_ item: HistoryItem) async throws {
         try copyOnly(item)
         try await Task.sleep(nanoseconds: sleepNanoseconds)

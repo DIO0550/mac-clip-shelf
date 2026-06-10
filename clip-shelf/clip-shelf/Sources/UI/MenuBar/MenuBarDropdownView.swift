@@ -65,6 +65,7 @@ struct MenuBarDropdownView: View {
                             item: item,
                             paste: { viewModel.paste(item) },
                             copy: { viewModel.copy(item) },
+                            copyPlainText: { viewModel.copyPlainText(item) },
                             showDetail: showHistory,
                             delete: { viewModel.delete(item) },
                             togglePin: { viewModel.togglePin(item) }

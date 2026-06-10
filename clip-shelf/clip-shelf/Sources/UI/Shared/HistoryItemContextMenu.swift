@@ -13,6 +13,7 @@ struct HistoryItemContextMenu: ViewModifier {
     let item: HistoryItem
     let paste: () -> Void
     let copy: () -> Void
+    let copyPlainText: () -> Void
     let showDetail: () -> Void
     let delete: () -> Void
     let togglePin: () -> Void
@@ -24,7 +25,7 @@ struct HistoryItemContextMenu: ViewModifier {
             Button("Show Details", action: showDetail)
             Divider()
             if case .text = item.content {
-                Button("Copy Plain Text", action: copy)
+                Button("Copy Plain Text", action: copyPlainText)
             }
             if case let .file(path) = item.content {
                 Button("Show in Finder") {
@@ -55,6 +56,7 @@ extension View {
         item: HistoryItem,
         paste: @escaping () -> Void,
         copy: @escaping () -> Void,
+        copyPlainText: @escaping () -> Void,
         showDetail: @escaping () -> Void,
         delete: @escaping () -> Void,
         togglePin: @escaping () -> Void
@@ -63,6 +65,7 @@ extension View {
             item: item,
             paste: paste,
             copy: copy,
+            copyPlainText: copyPlainText,
             showDetail: showDetail,
             delete: delete,
             togglePin: togglePin

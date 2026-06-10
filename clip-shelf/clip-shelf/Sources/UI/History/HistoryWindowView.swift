@@ -104,6 +104,7 @@ struct HistoryWindowView: View {
                         item: item,
                         paste: { viewModel.paste(item) },
                         copy: { viewModel.copy(item) },
+                        copyPlainText: { viewModel.copyPlainText(item) },
                         showDetail: { viewModel.selectedID = item.id },
                         delete: { viewModel.delete(item) },
                         togglePin: { viewModel.togglePin(item) }
