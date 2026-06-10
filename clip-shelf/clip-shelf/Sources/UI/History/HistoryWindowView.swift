@@ -92,7 +92,7 @@ struct HistoryWindowView: View {
     }
 
     private func facetCount(_ filter: HistoryFilter) -> Int {
-        (try? viewModel.history.search(query: "", filter: filter).count) ?? 0
+        viewModel.facetCount(for: filter)
     }
 
     private var listPane: some View {

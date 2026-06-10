@@ -99,6 +99,8 @@ final class HistoryListViewModel: ObservableObject {
     @Published var selectedID: HistoryItem.ID?
     @Published var toastMessage: String?
 
+    private var facetItems: [HistoryItem] = []
+
     let history: HistoryService
     let paste: PasteService
     private var cancellables: Set<AnyCancellable> = []
@@ -110,8 +112,12 @@ final class HistoryListViewModel: ObservableObject {
         self.paste = paste
         history.changes
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.reload(limit: limit) }
+            .sink { [weak self] in
+                self?.reloadFacets()
+                self?.reload(limit: limit)
+            }
             .store(in: &cancellables)
+        reloadFacets()
         reload(limit: limit)
     }
 
@@ -132,6 +138,14 @@ final class HistoryListViewModel: ObservableObject {
         } catch {
             items = []
         }
+    }
+
+    func facetCount(for filter: HistoryFilter) -> Int {
+        facetItems.filter { $0.matches(filter) }.count
+    }
+
+    private func reloadFacets() {
+        facetItems = (try? history.search(query: "", filter: .all)) ?? []
     }
 
     var selectedItem: HistoryItem? {
@@ -229,5 +243,24 @@ final class HistoryListViewModel: ObservableObject {
 
     func clear(keepPinned: Bool) {
         try? history.clear(keepPinned: keepPinned)
+    }
+}
+
+private extension HistoryItem {
+    func matches(_ filter: HistoryFilter) -> Bool {
+        switch filter {
+        case .all:
+            true
+        case .text:
+            kind == .text
+        case .image:
+            kind == .image
+        case .file:
+            kind == .file
+        case .pinned:
+            isPinned
+        case let .period(interval):
+            interval.contains(createdAt)
+        }
     }
 }
