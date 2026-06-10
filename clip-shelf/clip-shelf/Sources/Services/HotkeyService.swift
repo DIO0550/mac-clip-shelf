@@ -82,6 +82,7 @@ final class HotkeyService {
         }
 
         guard let combo else {
+            clearRegistrationFailure(for: slot)
             return
         }
 
@@ -123,11 +124,21 @@ final class HotkeyService {
         )
 
         guard status == noErr, let ref else {
-            lastRegistrationFailures.append(RegistrationFailure(slot: slot, status: status))
+            recordRegistrationFailure(RegistrationFailure(slot: slot, status: status))
             throw PasteError.accessibilityDenied
         }
 
         registered[slot] = ref
+        clearRegistrationFailure(for: slot)
+    }
+
+    private func recordRegistrationFailure(_ failure: RegistrationFailure) {
+        lastRegistrationFailures.removeAll { $0.slot == failure.slot }
+        lastRegistrationFailures.append(failure)
+    }
+
+    private func clearRegistrationFailure(for slot: Slot) {
+        lastRegistrationFailures.removeAll { $0.slot == slot }
     }
 
     private func installHandler() {
