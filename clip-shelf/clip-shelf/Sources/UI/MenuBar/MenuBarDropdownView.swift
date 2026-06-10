@@ -10,7 +10,7 @@ import SwiftUI
 
 struct MenuBarDropdownView: View {
     @StateObject private var viewModel: HistoryListViewModel
-    private let dependencies: AppDependencies
+    @ObservedObject private var hotkey: HotkeyService
     let showPicker: () -> Void
     let showHistory: () -> Void
     let showSettings: () -> Void
@@ -28,7 +28,7 @@ struct MenuBarDropdownView: View {
             paste: dependencies.paste,
             limit: 5
         ))
-        self.dependencies = dependencies
+        _hotkey = ObservedObject(wrappedValue: dependencies.hotkey)
         self.showPicker = showPicker
         self.showHistory = showHistory
         self.showSettings = showSettings
@@ -37,7 +37,7 @@ struct MenuBarDropdownView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !dependencies.hotkey.lastRegistrationFailures.isEmpty {
+            if !hotkey.lastRegistrationFailures.isEmpty {
                 Button(action: showSettings) {
                     Label("Some shortcuts could not be registered", systemImage: "exclamationmark.triangle")
                         .frame(maxWidth: .infinity, alignment: .leading)

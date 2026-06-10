@@ -11,7 +11,7 @@ import Foundation
 import os
 
 @MainActor
-final class HotkeyService {
+final class HotkeyService: ObservableObject {
     enum Slot: UInt32, CaseIterable, Sendable {
         case picker = 1
         case history = 2
@@ -32,7 +32,7 @@ final class HotkeyService {
 
     var onPickerHotkey: (() -> Void)?
     var onHistoryHotkey: (() -> Void)?
-    private(set) var lastRegistrationFailures: [RegistrationFailure] = []
+    @Published private(set) var lastRegistrationFailures: [RegistrationFailure] = []
 
     init(settings: SettingsStore) {
         self.settings = settings
