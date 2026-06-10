@@ -7,10 +7,12 @@
 
 import AppKit
 import Foundation
+import os
 
 @MainActor
 final class ClipboardMonitor {
     static let pollingInterval: TimeInterval = 0.2
+    static let internalEchoType = NSPasteboard.PasteboardType("app.clip-shelf.internalEcho")
 
     typealias TimerScheduler = @MainActor @Sendable (
         _ interval: TimeInterval,
@@ -23,6 +25,9 @@ final class ClipboardMonitor {
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    private static let maxTextBytes = 5 * 1024 * 1024
+    private static let maxImageBytes = 50 * 1024 * 1024
+    private static let logger = Logger(subsystem: "app.clip-shelf", category: "app.clipboard")
 
     var isRunning: Bool {
         timerBox != nil
@@ -50,6 +55,34 @@ final class ClipboardMonitor {
         self.kindResolver = kindResolver
         self.settingsProvider = settingsProvider
         self.onHistoryContentResolved = onHistoryContentResolved
+    }
+
+    convenience init(
+        historyService: HistoryService,
+        settingsStore: SettingsStore,
+        pasteboard: any ClipboardPasteboardReader = NSPasteboard.general,
+        scheduleTimer: @escaping TimerScheduler = ClipboardMonitor.scheduleFoundationTimer,
+        kindResolver: PasteboardKindResolver = PasteboardKindResolver()
+    ) {
+        self.init(
+            pasteboard: pasteboard,
+            scheduleTimer: scheduleTimer,
+            kindResolver: kindResolver,
+            settingsProvider: {
+                (try? settingsStore.resolvedSettings()) ?? .default
+            },
+            onHistoryContentResolved: { content in
+                guard let item = Self.historyItem(from: content) else {
+                    return
+                }
+
+                do {
+                    _ = try historyService.add(item)
+                } catch {
+                    Self.logger.error("Failed to store clipboard item: \(String(describing: error), privacy: .public)")
+                }
+            }
+        )
     }
 
     func start() {
@@ -107,11 +140,38 @@ final class ClipboardMonitor {
             return true
         }
 
+        if item.types.contains(Self.internalEchoType) {
+            return true
+        }
+
         if settings.respectConcealedType, item.types.contains(Self.concealedType) {
             return true
         }
 
         return false
+    }
+
+    private static func historyItem(from content: HistoryItem.Content) -> HistoryItem? {
+        switch content {
+        case let .text(text, rtf):
+            let sizeBytes = text.utf8.count + (rtf?.count ?? 0)
+            guard !text.isEmpty else {
+                return nil
+            }
+            guard sizeBytes <= maxTextBytes else {
+                logger.warning("Skipped oversized text clipboard item: \(sizeBytes, privacy: .public) bytes")
+                return nil
+            }
+            return HistoryItem(content: .text(text, rtf: rtf), sizeBytes: sizeBytes)
+        case let .image(data, typeIdentifier):
+            guard data.count <= maxImageBytes else {
+                logger.warning("Skipped oversized image clipboard item: \(data.count, privacy: .public) bytes")
+                return nil
+            }
+            return HistoryItem(content: .image(data, typeIdentifier: typeIdentifier), sizeBytes: data.count)
+        case let .file(path):
+            return HistoryItem(content: .file(path: path), sizeBytes: path.utf8.count)
+        }
     }
 
     private static func scheduleFoundationTimer(
