@@ -106,18 +106,18 @@ struct SettingsViewModelTests {
     }
 
     private func makeFixture() throws -> (directory: URL, store: SettingsStore, history: HistoryService) {
-        let directory = makeTemporaryDirectory()
+        let directory = try makeTemporaryDirectory()
         let database = try SQLiteDatabaseConnector().makeConnection(
             databaseURL: directory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
         )
         return (directory, SettingsStore(database: database), HistoryService(database: database))
     }
 
-    private func makeTemporaryDirectory() -> URL {
+    private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("clip-shelf-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
 
