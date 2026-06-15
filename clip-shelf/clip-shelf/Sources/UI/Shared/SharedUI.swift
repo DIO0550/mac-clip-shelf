@@ -94,8 +94,8 @@ struct HintBar: View {
 @MainActor
 final class HistoryListViewModel: ObservableObject {
     @Published var items: [HistoryItem] = []
-    @Published var query = "" { didSet { reload() } }
-    @Published var filter: HistoryFilter = .all { didSet { reload() } }
+    @Published private(set) var query = ""
+    @Published private(set) var filter: HistoryFilter = .all
     @Published var selectedID: HistoryItem.ID?
     @Published var toastMessage: String?
 
@@ -106,6 +106,7 @@ final class HistoryListViewModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var deletedItem: HistoryItem?
     private var deleteUndoTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(history: HistoryService, paste: PasteService, limit: Int? = nil) {
         self.history = history
@@ -123,6 +124,17 @@ final class HistoryListViewModel: ObservableObject {
 
     deinit {
         deleteUndoTask?.cancel()
+        reloadTask?.cancel()
+    }
+
+    func setQuery(_ value: String, limit: Int? = nil) {
+        query = value
+        scheduleReload(limit: limit)
+    }
+
+    func setFilter(_ value: HistoryFilter, limit: Int? = nil) {
+        filter = value
+        scheduleReload(limit: limit)
     }
 
     func reload(limit: Int? = nil) {
@@ -146,6 +158,16 @@ final class HistoryListViewModel: ObservableObject {
 
     private func reloadFacets() {
         facetItems = (try? history.search(query: "", filter: .all)) ?? []
+    }
+
+    private func scheduleReload(limit: Int? = nil) {
+        reloadTask?.cancel()
+        reloadTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            reload(limit: limit)
+            reloadTask = nil
+        }
     }
 
     var selectedItem: HistoryItem? {
@@ -173,10 +195,10 @@ final class HistoryListViewModel: ObservableObject {
         selectedID = items.last?.id
     }
 
-    func cycleFilter() {
+    func cycleFilter(limit: Int? = nil) {
         let filters = HistoryFilter.standardCases
         let currentIndex = filters.firstIndex(of: filter) ?? 0
-        filter = filters[(currentIndex + 1) % filters.count]
+        setFilter(filters[(currentIndex + 1) % filters.count], limit: limit)
     }
 
     func pasteSelected() {

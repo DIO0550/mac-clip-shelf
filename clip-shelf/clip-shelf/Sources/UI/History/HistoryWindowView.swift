@@ -31,7 +31,7 @@ struct HistoryWindowView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                TextField("Search", text: $viewModel.query)
+                TextField("Search", text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 260)
                 Toggle("Keep pinned", isOn: $keepPinnedOnClear)
@@ -60,6 +60,13 @@ struct HistoryWindowView: View {
         }
     }
 
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { viewModel.query },
+            set: { viewModel.setQuery($0) }
+        )
+    }
+
     private var sidebar: some View {
         List {
             Section("Kind") {
@@ -79,7 +86,7 @@ struct HistoryWindowView: View {
     }
 
     private func sidebarButton(_ title: String, _ filter: HistoryFilter) -> some View {
-        Button { viewModel.filter = filter } label: {
+        Button { viewModel.setFilter(filter) } label: {
             HStack {
                 Text(title)
                 Spacer()

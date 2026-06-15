@@ -24,10 +24,10 @@ struct PastePickerView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                TextField("Search", text: $viewModel.query)
+                TextField("Search", text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .focused($searchFocused)
-                FilterChips(filter: $viewModel.filter)
+                FilterChips(filter: filterBinding)
             }
             .padding(12)
 
@@ -79,6 +79,20 @@ struct PastePickerView: View {
             home: { viewModel.moveSelectionToStart() },
             end: { viewModel.moveSelectionToEnd() },
             cycleFilter: { viewModel.cycleFilter() }
+        )
+    }
+
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { viewModel.query },
+            set: { viewModel.setQuery($0) }
+        )
+    }
+
+    private var filterBinding: Binding<HistoryFilter> {
+        Binding(
+            get: { viewModel.filter },
+            set: { viewModel.setFilter($0) }
         )
     }
 
