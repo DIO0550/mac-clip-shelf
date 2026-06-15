@@ -74,6 +74,7 @@ final class SettingsViewModel: ObservableObject {
             enabled,
             for: .launchAtLogin,
             beforePersisting: { try launchAtLoginService.setEnabled(enabled) },
+            rollbackPersistedSideEffect: { try launchAtLoginService.setEnabled(!enabled) },
             mutate: { $0.launchAtLogin = enabled }
         )
     }
@@ -92,21 +93,28 @@ final class SettingsViewModel: ObservableObject {
         _ value: T,
         for key: SettingKey,
         beforePersisting: @escaping () throws = {},
+        rollbackPersistedSideEffect: @escaping () throws = {},
         mutate: @escaping (inout Settings) -> Void
     ) {
-        let previous = settings
-        var next = settings
-        mutate(&next)
-
         Task { @MainActor in
+            await Task.yield()
+
+            let previous = settings
+            var next = settings
+            mutate(&next)
             settings = next
             updateShortcutWarning()
 
+            var sideEffectApplied = false
             do {
                 try beforePersisting()
+                sideEffectApplied = true
                 try store.set(value, forKey: key)
                 settings = (try? store.resolvedSettings()) ?? next
             } catch {
+                if sideEffectApplied {
+                    try? rollbackPersistedSideEffect()
+                }
                 settings = previous
             }
 

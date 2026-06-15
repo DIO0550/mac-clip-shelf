@@ -36,6 +36,21 @@ struct SettingsViewModelTests {
         #expect(viewModel.shortcutWarning == "One shortcut is reserved by macOS.")
     }
 
+    @Test func rapidSettingsUpdatesMergeWithLatestSettings() async throws {
+        let fixture = try makeFixture()
+        defer { removeTemporaryDirectory(fixture.directory) }
+        let viewModel = SettingsViewModel(store: fixture.store, history: fixture.history)
+
+        viewModel.updateHistoryLimit(.limited(200))
+        viewModel.updateIncludeImages(false)
+        await drainMainActorTasks()
+
+        #expect(viewModel.settings.historyLimit == .limited(200))
+        #expect(viewModel.settings.includeImages == false)
+        #expect(try fixture.store.get(Settings.HistoryLimit.self, forKey: .historyLimit) == .limited(200))
+        #expect(try fixture.store.get(Bool.self, forKey: .includeImages) == false)
+    }
+
     @Test func launchAtLoginSuccessPersistsEnabledState() async throws {
         let fixture = try makeFixture()
         defer { removeTemporaryDirectory(fixture.directory) }
@@ -73,6 +88,23 @@ struct SettingsViewModelTests {
         #expect(persisted == nil)
     }
 
+    @Test func launchAtLoginPersistenceFailureRollsBackSystemState() async throws {
+        let store = SettingsStore(database: ExecuteFailingDatabase())
+        let history = HistoryService(database: ExecuteFailingDatabase())
+        let launchService = FakeLaunchAtLoginService()
+        let viewModel = SettingsViewModel(
+            store: store,
+            history: history,
+            launchAtLoginService: launchService
+        )
+
+        viewModel.setLaunchAtLogin(true)
+        await drainMainActorTasks()
+
+        #expect(launchService.enabledValues == [true, false])
+        #expect(viewModel.settings.launchAtLogin == false)
+    }
+
     private func makeFixture() throws -> (directory: URL, store: SettingsStore, history: HistoryService) {
         let directory = makeTemporaryDirectory()
         let database = try SQLiteDatabaseConnector().makeConnection(
@@ -102,6 +134,26 @@ struct SettingsViewModelTests {
 
 private enum LaunchAtLoginTestError: Error {
     case failed
+}
+
+private final class ExecuteFailingDatabase: DatabaseConnection, @unchecked Sendable {
+    let databaseURL = URL(fileURLWithPath: "/tmp/execute-failing.sqlite")
+
+    func execute(sql: String) throws {
+        throw DatabaseError.sqliteExecutionFailed(code: 1, message: "execute failed")
+    }
+
+    func intValue(sql: String) throws -> Int? {
+        nil
+    }
+
+    func stringValue(sql: String) throws -> String? {
+        nil
+    }
+
+    func rows(sql: String) throws -> [DatabaseRow] {
+        []
+    }
 }
 
 private final class FakeLaunchAtLoginService: LaunchAtLoginServicing {
