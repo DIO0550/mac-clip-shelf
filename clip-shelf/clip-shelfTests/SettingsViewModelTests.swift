@@ -131,7 +131,7 @@ struct SettingsViewModelTests {
     }
 
     private func drainMainActorTasks() async {
-        for _ in 0..<3 {
+        for _ in 0..<8 {
             await Task.yield()
         }
     }

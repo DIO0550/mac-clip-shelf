@@ -33,6 +33,7 @@ final class SettingsViewModel: ObservableObject {
     private let store: SettingsStore
     private let history: HistoryService
     private let launchAtLoginService: any LaunchAtLoginServicing
+    private var settingsUpdateTask: Task<Void, Never>?
 
     init(
         store: SettingsStore,
@@ -96,7 +97,9 @@ final class SettingsViewModel: ObservableObject {
         rollbackPersistedSideEffect: @escaping () throws = {},
         mutate: @escaping (inout Settings) -> Void
     ) {
-        Task { @MainActor in
+        let previousUpdateTask = settingsUpdateTask
+        settingsUpdateTask = Task { @MainActor in
+            await previousUpdateTask?.value
             await Task.yield()
 
             let previous = settings
