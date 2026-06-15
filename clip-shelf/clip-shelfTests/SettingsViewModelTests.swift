@@ -107,10 +107,15 @@ struct SettingsViewModelTests {
 
     private func makeFixture() throws -> (directory: URL, store: SettingsStore, history: HistoryService) {
         let directory = try makeTemporaryDirectory()
-        let database = try SQLiteDatabaseConnector().makeConnection(
-            databaseURL: directory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        )
-        return (directory, SettingsStore(database: database), HistoryService(database: database))
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(
+                databaseURL: directory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+            )
+            return (directory, SettingsStore(database: database), HistoryService(database: database))
+        } catch {
+            removeTemporaryDirectory(directory)
+            throw error
+        }
     }
 
     private func makeTemporaryDirectory() throws -> URL {
