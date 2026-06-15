@@ -107,6 +107,7 @@ final class HistoryListViewModel: ObservableObject {
     private var deletedItem: HistoryItem?
     private var deleteUndoTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
+    private var reloadGeneration = 0
 
     init(history: HistoryService, paste: PasteService, limit: Int? = nil) {
         self.history = history
@@ -162,11 +163,15 @@ final class HistoryListViewModel: ObservableObject {
 
     private func scheduleReload(limit: Int? = nil) {
         reloadTask?.cancel()
+        reloadGeneration += 1
+        let generation = reloadGeneration
         reloadTask = Task { @MainActor in
             await Task.yield()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, reloadGeneration == generation else { return }
             reload(limit: limit)
-            reloadTask = nil
+            if reloadGeneration == generation {
+                reloadTask = nil
+            }
         }
     }
 
