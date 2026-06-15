@@ -59,11 +59,16 @@ struct HistoryListViewModelTests {
 
     private func makeFixture() throws -> (directory: URL, history: HistoryService, paste: PasteService) {
         let directory = try makeTemporaryDirectory()
-        let database = try SQLiteDatabaseConnector().makeConnection(
-            databaseURL: directory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
-        )
-        let history = HistoryService(database: database)
-        return (directory, history, PasteService(historyService: history, sleepNanoseconds: 0))
+        do {
+            let database = try SQLiteDatabaseConnector().makeConnection(
+                databaseURL: directory.appendingPathComponent(SQLiteDatabaseConnector.databaseFileName)
+            )
+            let history = HistoryService(database: database)
+            return (directory, history, PasteService(historyService: history, sleepNanoseconds: 0))
+        } catch {
+            removeTemporaryDirectory(directory)
+            throw error
+        }
     }
 
     private func textItem(_ text: String, createdAt: String) -> HistoryItem {
