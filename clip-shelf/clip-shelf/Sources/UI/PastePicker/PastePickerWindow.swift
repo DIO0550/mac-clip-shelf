@@ -18,7 +18,7 @@ final class PastePickerWindow: NSWindowController {
         self.showHistory = showHistory
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
-            styleMask: [.hudWindow, .nonactivatingPanel, .titled, .fullSizeContentView],
+            styleMask: [.hudWindow, .utilityWindow, .nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )

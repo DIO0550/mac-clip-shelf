@@ -10,39 +10,74 @@ import Combine
 import ServiceManagement
 import SwiftUI
 
+protocol LaunchAtLoginServicing {
+    func setEnabled(_ enabled: Bool) throws
+}
+
+struct MainAppLaunchAtLoginService: LaunchAtLoginServicing {
+    func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+}
+
 @MainActor
 final class SettingsViewModel: ObservableObject {
-    @Published var settings: Settings
+    @Published private(set) var settings: Settings
     @Published var showingClearConfirmation = false
     @Published var shortcutWarning: String?
 
     private let store: SettingsStore
     private let history: HistoryService
+    private let launchAtLoginService: any LaunchAtLoginServicing
+    private var settingsUpdateTask: Task<Void, Never>?
 
-    init(store: SettingsStore, history: HistoryService) {
+    init(
+        store: SettingsStore,
+        history: HistoryService,
+        launchAtLoginService: any LaunchAtLoginServicing = MainAppLaunchAtLoginService()
+    ) {
         self.store = store
         self.history = history
+        self.launchAtLoginService = launchAtLoginService
         self.settings = (try? store.resolvedSettings()) ?? .default
     }
 
-    func save<T: Encodable>(_ value: T, for key: SettingKey) {
-        try? store.set(value, forKey: key)
-        settings = (try? store.resolvedSettings()) ?? settings
-        updateShortcutWarning()
+    func updateHistoryLimit(_ value: Settings.HistoryLimit) {
+        scheduleSettingsUpdate(value, for: .historyLimit) { $0.historyLimit = value }
+    }
+
+    func updateRespectConcealedType(_ value: Bool) {
+        scheduleSettingsUpdate(value, for: .respectConcealedType) { $0.respectConcealedType = value }
+    }
+
+    func updateIncludeImages(_ value: Bool) {
+        scheduleSettingsUpdate(value, for: .includeImages) { $0.includeImages = value }
+    }
+
+    func updatePickerShortcut(_ value: Settings.Shortcut) {
+        scheduleSettingsUpdate(value, for: .shortcutPicker) { $0.pickerShortcut = value }
+    }
+
+    func updateHistoryShortcut(_ value: Settings.Shortcut) {
+        scheduleSettingsUpdate(value, for: .shortcutHistory) { $0.historyShortcut = value }
+    }
+
+    func updateAppearance(_ value: Settings.Appearance) {
+        scheduleSettingsUpdate(value, for: .appearance) { $0.appearance = value }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            settings.launchAtLogin = enabled
-            save(enabled, for: .launchAtLogin)
-        } catch {
-            settings.launchAtLogin.toggle()
-        }
+        scheduleSettingsUpdate(
+            enabled,
+            for: .launchAtLogin,
+            beforePersisting: { try launchAtLoginService.setEnabled(enabled) },
+            rollbackPersistedSideEffect: { try launchAtLoginService.setEnabled(!enabled) },
+            mutate: { $0.launchAtLogin = enabled }
+        )
     }
 
     func clearAll() {
@@ -53,6 +88,41 @@ final class SettingsViewModel: ObservableObject {
         let reserved = [settings.pickerShortcut, settings.historyShortcut]
             .filter(HotkeyService.isKnownReservedShortcut)
         shortcutWarning = reserved.isEmpty ? nil : "One shortcut is reserved by macOS."
+    }
+
+    private func scheduleSettingsUpdate<T: Encodable>(
+        _ value: T,
+        for key: SettingKey,
+        beforePersisting: @escaping () throws = {},
+        rollbackPersistedSideEffect: @escaping () throws = {},
+        mutate: @escaping (inout Settings) -> Void
+    ) {
+        let previousUpdateTask = settingsUpdateTask
+        settingsUpdateTask = Task { @MainActor in
+            await previousUpdateTask?.value
+            await Task.yield()
+
+            let previous = settings
+            var next = settings
+            mutate(&next)
+            settings = next
+            updateShortcutWarning()
+
+            var sideEffectApplied = false
+            do {
+                try beforePersisting()
+                sideEffectApplied = true
+                try store.set(value, forKey: key)
+                settings = (try? store.resolvedSettings()) ?? next
+            } catch {
+                if sideEffectApplied {
+                    try? rollbackPersistedSideEffect()
+                }
+                settings = previous
+            }
+
+            updateShortcutWarning()
+        }
     }
 }
 
@@ -78,7 +148,7 @@ struct SettingsView: View {
             SettingsSection("Clipboard Monitoring") {
                 Picker("History limit", selection: Binding(
                     get: { viewModel.settings.historyLimit },
-                    set: { value in viewModel.settings.historyLimit = value; viewModel.save(value, for: .historyLimit) }
+                    set: { value in viewModel.updateHistoryLimit(value) }
                 )) {
                     ForEach(Settings.HistoryLimit.standardCases, id: \.self) { limit in
                         Text(limit.label).tag(limit)
@@ -86,22 +156,22 @@ struct SettingsView: View {
                 }
                 Toggle("Respect concealed clipboard types", isOn: Binding(
                     get: { viewModel.settings.respectConcealedType },
-                    set: { value in viewModel.settings.respectConcealedType = value; viewModel.save(value, for: .respectConcealedType) }
+                    set: { value in viewModel.updateRespectConcealedType(value) }
                 ))
                 Toggle("Include images", isOn: Binding(
                     get: { viewModel.settings.includeImages },
-                    set: { value in viewModel.settings.includeImages = value; viewModel.save(value, for: .includeImages) }
+                    set: { value in viewModel.updateIncludeImages(value) }
                 ))
             }
 
             SettingsSection("Shortcuts") {
                 ShortcutRecorder(title: "Picker", shortcut: Binding(
                     get: { viewModel.settings.pickerShortcut },
-                    set: { value in viewModel.settings.pickerShortcut = value; viewModel.save(value, for: .shortcutPicker) }
+                    set: { value in viewModel.updatePickerShortcut(value) }
                 ))
                 ShortcutRecorder(title: "History", shortcut: Binding(
                     get: { viewModel.settings.historyShortcut },
-                    set: { value in viewModel.settings.historyShortcut = value; viewModel.save(value, for: .shortcutHistory) }
+                    set: { value in viewModel.updateHistoryShortcut(value) }
                 ))
                 if let warning = viewModel.shortcutWarning {
                     Text(warning).foregroundStyle(.orange)
@@ -111,7 +181,7 @@ struct SettingsView: View {
             SettingsSection("Appearance") {
                 Picker("Theme", selection: Binding(
                     get: { viewModel.settings.appearance },
-                    set: { value in viewModel.settings.appearance = value; viewModel.save(value, for: .appearance) }
+                    set: { value in viewModel.updateAppearance(value) }
                 )) {
                     ForEach(Settings.Appearance.allCases, id: \.self) { appearance in
                         Text(appearance.rawValue.capitalized).tag(appearance)

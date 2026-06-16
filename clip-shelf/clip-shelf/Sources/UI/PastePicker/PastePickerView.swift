@@ -9,6 +9,8 @@ import AppKit
 import SwiftUI
 
 struct PastePickerView: View {
+    private static let itemLimit = 200
+
     @StateObject private var viewModel: HistoryListViewModel
     @FocusState private var searchFocused: Bool
     private let showHistory: () -> Void
@@ -16,7 +18,8 @@ struct PastePickerView: View {
     init(dependencies: AppDependencies, showHistory: @escaping () -> Void = {}) {
         _viewModel = StateObject(wrappedValue: HistoryListViewModel(
             history: dependencies.history,
-            paste: dependencies.paste
+            paste: dependencies.paste,
+            limit: Self.itemLimit
         ))
         self.showHistory = showHistory
     }
@@ -24,17 +27,17 @@ struct PastePickerView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                TextField("Search", text: $viewModel.query)
+                TextField("Search", text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .focused($searchFocused)
-                FilterChips(filter: $viewModel.filter)
+                FilterChips(filter: filterBinding)
             }
             .padding(12)
 
             Divider()
 
             List(selection: $viewModel.selectedID) {
-                ForEach(Array(viewModel.items.prefix(200).enumerated()), id: \.element.id) { index, item in
+                ForEach(Array(viewModel.items.prefix(Self.itemLimit).enumerated()), id: \.element.id) { index, item in
                     HistoryRow(item: item, index: index < 9 ? index + 1 : nil, isSelected: item.id == viewModel.selectedID)
                         .tag(item.id)
                         .historyItemContextMenu(
@@ -61,7 +64,7 @@ struct PastePickerView: View {
         }
         .frame(minWidth: 640, minHeight: 460)
         .onAppear {
-            viewModel.reload()
+            viewModel.reload(limit: Self.itemLimit)
             searchFocused = true
         }
         .onExitCommand { closeWindow() }
@@ -78,7 +81,21 @@ struct PastePickerView: View {
             pageDown: { viewModel.moveSelection(by: 9) },
             home: { viewModel.moveSelectionToStart() },
             end: { viewModel.moveSelectionToEnd() },
-            cycleFilter: { viewModel.cycleFilter() }
+            cycleFilter: { viewModel.cycleFilter(limit: Self.itemLimit) }
+        )
+    }
+
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { viewModel.query },
+            set: { viewModel.setQuery($0, limit: Self.itemLimit) }
+        )
+    }
+
+    private var filterBinding: Binding<HistoryFilter> {
+        Binding(
+            get: { viewModel.filter },
+            set: { viewModel.setFilter($0, limit: Self.itemLimit) }
         )
     }
 
