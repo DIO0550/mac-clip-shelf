@@ -74,8 +74,8 @@ final class SettingsViewModel: ObservableObject {
         scheduleSettingsUpdate(
             enabled,
             for: .launchAtLogin,
-            beforePersisting: { try launchAtLoginService.setEnabled(enabled) },
-            rollbackPersistedSideEffect: { try launchAtLoginService.setEnabled(!enabled) },
+            beforePersisting: { try self.launchAtLoginService.setEnabled(enabled) },
+            rollbackPersistedSideEffect: { try self.launchAtLoginService.setEnabled(!enabled) },
             mutate: { $0.launchAtLogin = enabled }
         )
     }
@@ -93,8 +93,8 @@ final class SettingsViewModel: ObservableObject {
     private func scheduleSettingsUpdate<T: Encodable>(
         _ value: T,
         for key: SettingKey,
-        beforePersisting: @escaping () throws = {},
-        rollbackPersistedSideEffect: @escaping () throws = {},
+        beforePersisting: @escaping () throws -> Void = {},
+        rollbackPersistedSideEffect: @escaping () throws -> Void = {},
         mutate: @escaping (inout Settings) -> Void
     ) {
         let previousUpdateTask = settingsUpdateTask
