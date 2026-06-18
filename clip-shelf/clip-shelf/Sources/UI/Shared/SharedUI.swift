@@ -37,6 +37,7 @@ struct HistoryRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
@@ -180,6 +181,13 @@ final class HistoryListViewModel: ObservableObject {
         return items.first { $0.id == selectedID } ?? items.first
     }
 
+    var canPasteAutomatically: Bool {
+        if paste.canPasteAutomatically {
+            return true
+        }
+        return paste.requestAccessibilityPermission()
+    }
+
     func selectIndex(_ index: Int) {
         guard items.indices.contains(index) else { return }
         selectedID = items[index].id
@@ -227,15 +235,36 @@ final class HistoryListViewModel: ObservableObject {
     }
 
     func paste(_ item: HistoryItem) {
-        Task { try? await paste.paste(item) }
+        Task {
+            do {
+                try await paste.paste(item)
+                toastMessage = nil
+            } catch PasteError.accessibilityDenied {
+                toastMessage = "Copied. Enable Accessibility permission and restart clip-shelf."
+            } catch PasteError.pasteboardWriteFailed {
+                toastMessage = "Paste failed. Could not write to the clipboard."
+            } catch {
+                toastMessage = "Paste failed."
+            }
+        }
     }
 
     func copy(_ item: HistoryItem) {
-        try? paste.copyOnly(item)
+        do {
+            try paste.copyOnly(item)
+            toastMessage = "Copied to clipboard."
+        } catch {
+            toastMessage = "Copy failed."
+        }
     }
 
     func copyPlainText(_ item: HistoryItem) {
-        try? paste.copyPlainTextOnly(item)
+        do {
+            try paste.copyPlainTextOnly(item)
+            toastMessage = "Copied plain text to clipboard."
+        } catch {
+            toastMessage = "Copy failed."
+        }
     }
 
     func togglePin(_ item: HistoryItem) {

@@ -50,7 +50,8 @@ final class MenuBarController: NSObject {
             showPicker: showPicker,
             showHistory: showHistory,
             showSettings: showSettings,
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            close: { [weak self] in self?.popover.performClose(nil) }
         ))
     }
 
@@ -71,6 +72,7 @@ final class MenuBarController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            dependencies.paste.captureFrontmostApplicationForPaste()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
