@@ -15,13 +15,15 @@ struct MenuBarDropdownView: View {
     let showHistory: () -> Void
     let showSettings: () -> Void
     let quit: () -> Void
+    let close: () -> Void
 
     init(
         dependencies: AppDependencies,
         showPicker: @escaping () -> Void,
         showHistory: @escaping () -> Void,
         showSettings: @escaping () -> Void,
-        quit: @escaping () -> Void
+        quit: @escaping () -> Void,
+        close: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: HistoryListViewModel(
             history: dependencies.history,
@@ -33,6 +35,7 @@ struct MenuBarDropdownView: View {
         self.showHistory = showHistory
         self.showSettings = showSettings
         self.quit = quit
+        self.close = close
     }
 
     var body: some View {
@@ -56,14 +59,14 @@ struct MenuBarDropdownView: View {
                 VStack(spacing: 2) {
                     ForEach(Array(viewModel.items.prefix(5).enumerated()), id: \.element.id) { index, item in
                         Button {
-                            viewModel.paste(item)
+                            pasteAndClose(item)
                         } label: {
                             HistoryRow(item: item, index: index + 1, isSelected: item.id == viewModel.selectedID)
                         }
                         .buttonStyle(.plain)
                         .historyItemContextMenu(
                             item: item,
-                            paste: { viewModel.paste(item) },
+                            paste: { pasteAndClose(item) },
                             copy: { viewModel.copy(item) },
                             copyPlainText: { viewModel.copyPlainText(item) },
                             showDetail: showHistory,
@@ -71,10 +74,18 @@ struct MenuBarDropdownView: View {
                             togglePin: { viewModel.togglePin(item) }
                         )
                         .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [])
-                        .onTapGesture { viewModel.selectedID = item.id }
                     }
                 }
                 .padding(8)
+            }
+
+            if let toast = viewModel.toastMessage {
+                Text(toast)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
             }
 
             Divider()
@@ -92,9 +103,9 @@ struct MenuBarDropdownView: View {
             VStack {
                 Button("Move Up") { viewModel.moveSelection(by: -1) }.keyboardShortcut(.upArrow, modifiers: [])
                 Button("Move Down") { viewModel.moveSelection(by: 1) }.keyboardShortcut(.downArrow, modifiers: [])
-                Button("Paste Selected") { viewModel.pasteSelected() }.keyboardShortcut(.return, modifiers: [])
+                Button("Paste Selected") { pasteSelectedAndClose() }.keyboardShortcut(.return, modifiers: [])
                 Button("Copy Selected") { viewModel.copySelected() }.keyboardShortcut(.return, modifiers: .command)
-                Button("Close") { NSApp.keyWindow?.close() }.keyboardShortcut(.escape, modifiers: [])
+                Button("Close") { close() }.keyboardShortcut(.escape, modifiers: [])
             }
             .frame(width: 0, height: 0)
             .opacity(0)
@@ -102,8 +113,26 @@ struct MenuBarDropdownView: View {
         }
     }
 
+    private func pasteSelectedAndClose() {
+        guard let item = viewModel.selectedItem else { return }
+        pasteAndClose(item)
+    }
+
+    private func pasteAndClose(_ item: HistoryItem) {
+        viewModel.selectedID = item.id
+        guard viewModel.canPasteAutomatically else {
+            viewModel.paste(item)
+            return
+        }
+        viewModel.paste(item)
+        close()
+    }
+
     private func actionRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            close()
+            action()
+        } label: {
             Label(title, systemImage: systemImage)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)

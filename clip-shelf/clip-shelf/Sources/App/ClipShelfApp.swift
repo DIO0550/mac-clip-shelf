@@ -51,12 +51,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
             menuBarController = MenuBarController(
                 dependencies: dependencies,
-                showPicker: { pastePickerWindow.show() },
+                showPicker: {
+                    dependencies.paste.captureFrontmostApplicationForPaste()
+                    pastePickerWindow.show()
+                },
                 showHistory: { historyWindow.show() },
                 showSettings: { settingsWindow.show() }
             )
 
-            dependencies.hotkey.onPickerHotkey = { pastePickerWindow.show() }
+            dependencies.hotkey.onPickerHotkey = {
+                dependencies.paste.captureFrontmostApplicationForPaste()
+                pastePickerWindow.show()
+            }
             dependencies.hotkey.onHistoryHotkey = { historyWindow.show() }
             dependencies.hotkey.registerAll()
             dependencies.monitor.start()

@@ -8,6 +8,11 @@
 import AppKit
 import SwiftUI
 
+private final class PastePickerPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class PastePickerWindow: NSWindowController {
     private let dependencies: AppDependencies
@@ -16,20 +21,22 @@ final class PastePickerWindow: NSWindowController {
     init(dependencies: AppDependencies, showHistory: @escaping () -> Void = {}) {
         self.dependencies = dependencies
         self.showHistory = showHistory
-        let panel = NSPanel(
+        let panel = PastePickerPanel(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
             styleMask: [.hudWindow, .utilityWindow, .nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.title = "Paste Picker"
+        panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .transient]
         panel.titleVisibility = .hidden
         panel.contentViewController = NSHostingController(rootView: PastePickerView(
             dependencies: dependencies,
-            showHistory: showHistory
+            showHistory: showHistory,
+            close: { panel.orderOut(nil) }
         ))
         super.init(window: panel)
     }
@@ -49,7 +56,6 @@ final class PastePickerWindow: NSWindowController {
             )
             window.setFrameOrigin(origin)
         }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
     }
 }

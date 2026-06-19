@@ -12,16 +12,21 @@ struct PastePickerView: View {
     private static let itemLimit = 200
 
     @StateObject private var viewModel: HistoryListViewModel
-    @FocusState private var searchFocused: Bool
     private let showHistory: () -> Void
+    private let close: () -> Void
 
-    init(dependencies: AppDependencies, showHistory: @escaping () -> Void = {}) {
+    init(
+        dependencies: AppDependencies,
+        showHistory: @escaping () -> Void = {},
+        close: @escaping () -> Void = { NSApp.keyWindow?.close() }
+    ) {
         _viewModel = StateObject(wrappedValue: HistoryListViewModel(
             history: dependencies.history,
             paste: dependencies.paste,
             limit: Self.itemLimit
         ))
         self.showHistory = showHistory
+        self.close = close
     }
 
     var body: some View {
@@ -29,17 +34,22 @@ struct PastePickerView: View {
             VStack(spacing: 10) {
                 TextField("Search", text: queryBinding)
                     .textFieldStyle(.roundedBorder)
-                    .focused($searchFocused)
                 FilterChips(filter: filterBinding)
             }
             .padding(12)
 
             Divider()
 
-            List(selection: $viewModel.selectedID) {
-                ForEach(Array(viewModel.items.prefix(Self.itemLimit).enumerated()), id: \.element.id) { index, item in
-                    HistoryRow(item: item, index: index < 9 ? index + 1 : nil, isSelected: item.id == viewModel.selectedID)
-                        .tag(item.id)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(viewModel.items.prefix(Self.itemLimit).enumerated()), id: \.element.id) { index, item in
+                        Button {
+                            pasteAndClose(item)
+                        } label: {
+                            HistoryRow(item: item, index: index < 9 ? index + 1 : nil, isSelected: item.id == viewModel.selectedID)
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                         .historyItemContextMenu(
                             item: item,
                             paste: { pasteAndClose(item) },
@@ -49,15 +59,18 @@ struct PastePickerView: View {
                             delete: { viewModel.delete(item) },
                             togglePin: { viewModel.togglePin(item) }
                         )
-                        .onTapGesture { viewModel.selectedID = item.id }
+                    }
                 }
+                .padding(8)
             }
-            .listStyle(.plain)
 
             if let toast = viewModel.toastMessage {
-                Button(toast) { viewModel.restoreDeleted() }
-                    .buttonStyle(.plain)
-                    .padding(8)
+                Text(toast)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
             }
 
             HintBar(text: "Enter paste · Cmd+Enter copy · Cmd+1-9 paste · Cmd+Backspace delete · Cmd+P pin")
@@ -65,7 +78,6 @@ struct PastePickerView: View {
         .frame(minWidth: 640, minHeight: 460)
         .onAppear {
             viewModel.reload(limit: Self.itemLimit)
-            searchFocused = true
         }
         .onExitCommand { closeWindow() }
         .onSubmit { pasteSelectedAndClose() }
@@ -100,6 +112,11 @@ struct PastePickerView: View {
     }
 
     private func pasteAndClose(_ item: HistoryItem) {
+        viewModel.selectedID = item.id
+        guard viewModel.canPasteAutomatically else {
+            viewModel.paste(item)
+            return
+        }
         viewModel.paste(item)
         closeWindow()
     }
@@ -127,7 +144,7 @@ struct PastePickerView: View {
     }
 
     private func closeWindow() {
-        NSApp.keyWindow?.close()
+        close()
     }
 }
 
